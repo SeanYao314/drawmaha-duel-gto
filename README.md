@@ -54,7 +54,7 @@ Open the page in two browser windows, or send the room link to a friend, to play
 1. One player creates a room and picks the stake and the number of cards dealt (7–10). They get a 4-character code and a share link.
 2. The opponent joins with the code. Rooms are heads-up only.
 3. The host starts the game. The first button is random, and it alternates after that.
-4. Each player sees their 9 cards and both flops, then clicks the cards to keep (2–5).
+4. Each player sees their 9 cards and both flops, all fully visible, then clicks the cards to discard (4–7 with 9 cards). A marked card drops down and fades, and clicking it again keeps it.
    - The draw button always says what will happen, for example "Discard 6 · draw 2" or "Pat — discard 4".
    - IP can line up a keep early, but can't submit it until OOP's draw count is announced.
 5. After IP draws, the turns and rivers come out one at a time. The opponent's final cards flip over, then the three contests and any scoop are shown. A chime plays when you win, with a bigger one for a scoop. The 🔊 button mutes it.
@@ -89,6 +89,17 @@ The **Solver study** panel stays hidden until the hand is over, unless you click
   - How often OOP announces each draw count, and how IP responds to each announcement.
   - "Avg gain from deviating": how much a sampled hand could still gain by switching strategy. Near zero means the solve has settled.
 - **The bot's draw.** Once the cards are shown: its full dealt hand (kept cards highlighted, discards faded), which keeps it was choosing between, and which one it played. Its discards also appear next to its final hand on the table.
+
+### Session graph
+
+Below the table, practice mode keeps a running **Session** panel. It has four totals, a line chart by hand (hover for the values after any hand), and a hand-by-hand table:
+
+- **PnL:** the money that actually changed hands.
+- **After-draw EV:** what your final five were worth against the bot's actual final five, averaged exactly over every possible turn and river on both boards (discards and both draws removed from the deck). This is PnL with the board luck taken out: if you were behind after the draw but hit both boards, PnL goes up while after-draw EV goes down.
+- **GTO EV:** the EV of the solver's best draw for your dealt cards against the equilibrium range (given the bot's real announcement when you're in position). It measures how good your starting hands were.
+- **EV lost:** the best draw's EV minus the EV of the draw you actually chose. It's always ≤ 0. For example, picking a keep worth +1.30 when the best was +1.43 adds −0.13 stakes (−$13 at $100).
+
+A new hand's numbers join the graph only once its reveal has finished, so the graph never spoils a result.
 
 ### How the solver works (lib/solver.js)
 

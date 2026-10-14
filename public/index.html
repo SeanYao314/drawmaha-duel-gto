@@ -184,7 +184,7 @@
         <div class="actions" id="drawActions">
           <button id="btnClearKeep" class="secondary">Clear</button>
           <button id="btnAdvice" class="secondary hidden">Peek at solver</button>
-          <button id="btnDraw" class="primary" disabled>Select 2&ndash;5 cards to keep</button>
+          <button id="btnDraw" class="primary" disabled>Mark cards to discard</button>
         </div>
         <p id="gameError" class="error hidden"></p>
       </div>
@@ -199,6 +199,27 @@
           <button id="btnSkipReveal" class="secondary hidden">Skip ▶</button>
           <button id="btnNextHand" class="primary hidden">Deal Next Hand</button>
         </div>
+      </div>
+
+      <!-- session graph (practice) -->
+      <div id="sessionPanel" class="session-panel hidden">
+        <div class="study-head">
+          <h3>📈 Session</h3>
+          <span id="sessionCount" class="study-status"></span>
+        </div>
+        <div class="stat-grid" id="sessionTiles"></div>
+        <div class="viz-root">
+          <div class="chart-legend" id="chartLegend"></div>
+          <div class="chart-wrap" id="chartWrap">
+            <svg id="sessionChart" role="img" aria-label="Cumulative results by hand"></svg>
+            <div class="chart-tip hidden" id="chartTip"></div>
+          </div>
+        </div>
+        <details class="session-table-box">
+          <summary>Hand-by-hand table</summary>
+          <div id="sessionTable"></div>
+        </details>
+        <p class="study-foot"><strong>PnL</strong>: money actually won or lost. <strong>After-draw EV</strong>: what your final five were worth against the bot's actual final five, averaged over every possible turn and river — PnL with the board luck taken out. <strong>GTO EV</strong>: what your dealt cards were worth with the solver's best draw against the equilibrium range — how good your starting hands were. <strong>EV lost</strong>: the best draw's EV minus the EV of the draw you chose (always ≤ 0) — what your drawing decisions cost. All lines are running totals.</p>
       </div>
 
       <!-- solver study panel (practice) -->

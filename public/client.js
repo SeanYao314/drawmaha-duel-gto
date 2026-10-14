@@ -342,7 +342,7 @@
     renderMe(vm);
     renderResults(vm, stage);
     renderHistory(vm);
-    if (vm.mode === 'practice') renderStudy(); else hide('studyPanel');
+    if (vm.mode === 'practice') { renderStudy(); renderSession(stage); } else { hide('studyPanel'); hide('sessionPanel'); }
     reveal.lastStage = stage;
   }
 
@@ -423,7 +423,6 @@
       // Already drawn: show the final five, new cards marked.
       [...vm.keep, ...vm.drawn].forEach((c) => box.appendChild(cardEl(c, { extra: 'static' + (vm.drawn.includes(c) ? ' drawn' : '') })));
       box.appendChild(discardGroup(vm.hand.filter((c) => !vm.keep.includes(c))));
-      box.classList.remove('selecting');
       const nd = G.discardCount(vm.keep.length, vm.hand.length);
       status.textContent = vm.drawn.length === 0 ? `You discarded ${nd} — pat` : `You discarded ${nd} — drew ${vm.drawn.length}`;
       status.classList.add('announce');
@@ -433,9 +432,10 @@
     }
 
     show('drawActions');
-    box.classList.add('selecting');
+    // All cards start fully visible; clicking a card marks it for discard (click again
+    // to keep it). Whatever isn't marked is your keep.
     for (const c of sortCards(vm.hand, cardSortMode)) {
-      const node = cardEl(c, { extra: table.selected.has(c) ? 'kept' : '' });
+      const node = cardEl(c, { extra: table.selected.has(c) ? 'marked-discard' : '' });
       node.addEventListener('click', () => {
         if (table.selected.has(c)) table.selected.delete(c); else table.selected.add(c);
         renderTable();
@@ -443,7 +443,8 @@
       box.appendChild(node);
     }
 
-    const k = table.selected.size;
+    const nDisc = table.selected.size, k = vm.hand.length - nDisc;
+    const minDisc = vm.hand.length - G.MAX_KEEP, maxDisc = vm.hand.length - G.MIN_KEEP;
     const legal = k >= G.MIN_KEEP && k <= G.MAX_KEEP;
     const btn = el('btnDraw');
     if (myTurn) {
@@ -452,20 +453,20 @@
       status.textContent = '';
     }
     let hint;
-    if (k === 0) hint = 'Click the cards you want to keep (2–5). Everything else is discarded.';
-    else if (k < G.MIN_KEEP) hint = `Keeping ${k} — keep at least 2.`;
-    else if (k > G.MAX_KEEP) hint = `Keeping ${k} — you can keep at most 5.`;
-    else hint = `Keeping ${k} → discard ${vm.hand.length - k}, ${k === 5 ? 'pat (draw nothing)' : 'draw ' + (5 - k)}.`;
+    if (nDisc === 0) hint = `Click the cards you want to discard (${minDisc}–${maxDisc}). Whatever you don't mark is your hand.`;
+    else if (k > G.MAX_KEEP) hint = `Discarding ${nDisc} — discard at least ${minDisc} (you can keep at most 5).`;
+    else if (k < G.MIN_KEEP) hint = `Discarding ${nDisc} — discard at most ${maxDisc} (you must keep at least 2).`;
+    else hint = `Discarding ${nDisc}, keeping ${k} → ${k === 5 ? 'pat (draw nothing)' : 'draw ' + (5 - k)}.`;
     if (!myTurn && vm.meSeat === 'ip' && !vm.oppAnnounce) {
-      hint += ` ${vm.oppName} is out of position and announces first — you can line up your keep meanwhile.`;
+      hint += ` ${vm.oppName} is out of position and announces first — you can line up your discards meanwhile.`;
     }
     if (myTurn && vm.meSeat === 'ip' && vm.oppAnnounce) {
       hint = `${vm.oppName} ${announceText(vm.oppAnnounce)}. ` + hint;
     }
     el('keepHint').textContent = hint;
     btn.disabled = !(myTurn && legal);
-    btn.textContent = !legal ? 'Select 2–5 cards to keep'
-      : k === 5 ? `Pat — discard ${vm.hand.length - 5}` : `Discard ${vm.hand.length - k} · draw ${5 - k}`;
+    btn.textContent = !legal ? `Mark ${minDisc}–${maxDisc} cards to discard`
+      : k === 5 ? `Pat — discard ${nDisc}` : `Discard ${nDisc} · draw ${5 - k}`;
     if (!myTurn && legal) btn.textContent = 'Waiting for your turn…';
     if (table.error) { el('gameError').textContent = table.error; show('gameError'); } else hide('gameError');
   }
@@ -475,7 +476,7 @@
   el('btnDraw').addEventListener('click', async () => {
     const vm = currentVM();
     if (!vm) return;
-    const keep = vm.hand.filter((c) => table.selected.has(c));
+    const keep = vm.hand.filter((c) => !table.selected.has(c));
     const err = G.validateKeep(vm.hand, keep);
     if (err) { table.error = err; renderTable(); return; }
     table.error = null;
@@ -600,7 +601,7 @@
     savePracticePrefs({ preset, handSize, stake: Number(el('practiceStake').value) });
     practice = {
       stake: Number(el('practiceStake').value), preset, handSize, handNumber: 0,
-      cumulative: { me: 0, bot: 0 }, history: [], firstSeat: Math.random() < 0.5 ? 'oop' : 'ip', hand: null
+      cumulative: { me: 0, bot: 0 }, history: [], stats: [], firstSeat: Math.random() < 0.5 ? 'oop' : 'ip', hand: null
     };
     el('psHandSize').value = String(handSize);
     el('psDepth').value = preset;
@@ -756,6 +757,7 @@
     practice.cumulative.me += dollars.me;
     practice.cumulative.bot += dollars.bot;
     practice.history.push({ handNumber: practice.handNumber, me: dollars.me, scoop: res.scoop === 'me' ? 'me' : res.scoop ? 'opp' : null });
+    practice.stats.push(handStats(h, dollars.me));
     h.acting = null;
     h.results = {
       handNumber: practice.handNumber, stake: practice.stake, boardA, boardB, oopId, ipId,
@@ -769,6 +771,169 @@
     };
     renderTable();
   }
+
+  // =====================================================================
+  // SESSION GRAPH (practice): PnL, after-draw EV, GTO EV, EV lost to draw choices
+  // =====================================================================
+  // Per-hand numbers, in dollars:
+  //   pnl       — what actually changed hands
+  //   afterDraw — exact EV of my final five vs the bot's final five over all turns/rivers
+  //   gto       — EV of the solver's best keep for my dealt cards vs the equilibrium range
+  //   evLoss    — EV of the keep I chose minus that best keep (≤ 0)
+  // When I'm in position, "vs the equilibrium range" means given the bot's actual
+  // announcement, since that's what I knew when I drew.
+  function handStats(h, pnl) {
+    const stake = practice.stake;
+    const known = [...h.flopA, ...h.flopB, ...h.my9, ...h.bot9, ...h.myDrawn, ...h.botDrawn];
+    const afterDraw = S.afterDrawEquity([...h.myKeep, ...h.myDrawn], [...h.botKeep, ...h.botDrawn], h.flopA, h.flopB, known);
+    let gto = null, mine = null;
+    if (h.solve.status === 'done') {
+      const NK = S.layout(h.my9.length).NKEEPS;
+      const me = h.solve.result.observers.find((o) => o.id === 'me');
+      const off = h.mySeat === 'ip' ? h.botDrawn.length * NK : 0;
+      let best = -Infinity;
+      for (let k = 0; k < NK; k++) best = Math.max(best, me.ev[off + k]);
+      gto = best;
+      mine = me.ev[off + keepIndexOf(h.my9, h.myKeep)];
+    }
+    return {
+      hand: practice.handNumber,
+      pnl,
+      afterDraw: afterDraw * stake,
+      gto: gto === null ? null : gto * stake,
+      evLoss: gto === null ? null : (mine - gto) * stake
+    };
+  }
+
+  const SERIES = [
+    { key: 'pnl', name: 'PnL', color: 'var(--series-1)' },
+    { key: 'afterDraw', name: 'After-draw EV', color: 'var(--series-2)' },
+    { key: 'gto', name: 'GTO EV', color: 'var(--series-3)' },
+    { key: 'evLoss', name: 'EV lost', color: 'var(--series-4)', dash: '6 4' }
+  ];
+
+  function cumulativeSeries(stats) {
+    const out = {};
+    for (const sr of SERIES) {
+      let acc = 0;
+      out[sr.key] = [0, ...stats.map((x) => (acc += x[sr.key] || 0))];
+    }
+    return out;
+  }
+
+  function niceTicks(min, max, count = 5) {
+    if (min === max) { min -= 100; max += 100; }
+    const span = max - min, raw = span / count;
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((x) => span / x <= count) || 10 * mag;
+    const lo = Math.floor(min / step) * step, hi = Math.ceil(max / step) * step;
+    const ticks = [];
+    for (let v = lo; v <= hi + step / 2; v += step) ticks.push(Math.round(v * 100) / 100);
+    return ticks;
+  }
+
+  function renderSession(stage) {
+    if (!practice) { hide('sessionPanel'); return; }
+    // Hold the newest hand back until its reveal has finished, so the graph never spoils it.
+    const h = practice.hand;
+    const pendingReveal = h && h.results && stage < FINAL_STAGE;
+    const stats = pendingReveal ? practice.stats.slice(0, -1) : practice.stats;
+    show('sessionPanel');
+    el('sessionCount').textContent = `${stats.length} hand${stats.length === 1 ? '' : 's'} · ${money(practice.stake, { sign: false })} stakes`;
+    const sum = (k) => stats.reduce((a, x) => a + (x[k] || 0), 0);
+    const tiles = [['PnL', sum('pnl')], ['After-draw EV', sum('afterDraw')], ['GTO EV', sum('gto')], ['EV lost', sum('evLoss')]];
+    el('sessionTiles').innerHTML = tiles.map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v"><span class="${cls(Math.round(v))}" style="font-variant-numeric:tabular-nums">${money(v)}</span></div></div>`).join('');
+    el('chartLegend').innerHTML = SERIES.map((sr) => `<span class="key"><svg width="22" height="8"><line x1="1" y1="4" x2="21" y2="4" stroke="${sr.color}" stroke-width="2.5" stroke-linecap="round"${sr.dash ? ` stroke-dasharray="${sr.dash}"` : ''}/></svg>${sr.name}</span>`).join('');
+    drawChart(stats);
+    el('sessionTable').innerHTML = stats.length
+      ? `<div class="table-scroll"><table class="session-table"><tr><th>Hand</th>${SERIES.map((sr) => `<th>${sr.name}</th>`).join('')}</tr>` +
+        stats.map((x) => `<tr><td>#${x.hand}</td>${SERIES.map((sr) => `<td class="${x[sr.key] === null ? '' : cls(Math.round(x[sr.key]))}">${x[sr.key] === null ? '—' : money(x[sr.key])}</td>`).join('')}</tr>`).join('') +
+        `<tr><td><strong>Total</strong></td>${SERIES.map((sr) => `<td><strong>${money(sum(sr.key))}</strong></td>`).join('')}</tr></table></div>`
+      : '<p class="hint">No hands yet.</p>';
+  }
+
+  let chartState = null;
+  function drawChart(stats) {
+    const svg = el('sessionChart'), wrap = el('chartWrap');
+    const W = Math.max(280, wrap.clientWidth || 800), Hh = 260;
+    const pad = { l: 62, r: 64, t: 12, b: 28 };
+    svg.setAttribute('viewBox', `0 0 ${W} ${Hh}`);
+    if (!stats.length) {
+      svg.innerHTML = `<text x="${W / 2}" y="${Hh / 2}" text-anchor="middle" fill="var(--text-muted)" font-size="13">Finish a hand to start the graph.</text>`;
+      chartState = null;
+      return;
+    }
+    const cum = cumulativeSeries(stats);
+    const n = stats.length;
+    const all = SERIES.flatMap((sr) => cum[sr.key]);
+    const ticks = niceTicks(Math.min(0, ...all), Math.max(0, ...all));
+    const yMin = ticks[0], yMax = ticks[ticks.length - 1];
+    const x = (i) => pad.l + (n === 0 ? 0 : (i / n) * (W - pad.l - pad.r));
+    const y = (v) => pad.t + (1 - (v - yMin) / (yMax - yMin)) * (Hh - pad.t - pad.b);
+    let g = '';
+    // recessive grid + y labels
+    for (const t of ticks) {
+      g += `<line x1="${pad.l}" x2="${W - pad.r}" y1="${y(t)}" y2="${y(t)}" stroke="${t === 0 ? 'var(--axis)' : 'var(--grid)'}" stroke-width="1"/>`;
+      g += `<text x="${pad.l - 8}" y="${y(t) + 4}" text-anchor="end" font-size="11" fill="var(--text-muted)">${money(t)}</text>`;
+    }
+    // x labels: a few hand numbers
+    const xStep = Math.max(1, Math.ceil(n / 8));
+    for (let i = 0; i <= n; i += xStep) g += `<text x="${x(i)}" y="${Hh - 8}" text-anchor="middle" font-size="11" fill="var(--text-muted)">${i}</text>`;
+    if (n % xStep !== 0) g += `<text x="${x(n)}" y="${Hh - 8}" text-anchor="middle" font-size="11" fill="var(--text-muted)">${n}</text>`;
+    // lines
+    for (const sr of SERIES) {
+      const pts = cum[sr.key].map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+      g += `<polyline points="${pts}" fill="none" stroke="${sr.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"${sr.dash ? ` stroke-dasharray="${sr.dash}"` : ''}/>`;
+    }
+    // direct end labels (values in text ink, a colored tick carries identity), de-overlapped
+    const ends = SERIES.map((sr) => ({ sr, v: cum[sr.key][n], y: y(cum[sr.key][n]) })).sort((a, b) => a.y - b.y);
+    for (let i = 1; i < ends.length; i++) if (ends[i].y - ends[i - 1].y < 14) ends[i].y = ends[i - 1].y + 14;
+    for (const e of ends) {
+      g += `<line x1="${x(n) + 4}" x2="${x(n) + 12}" y1="${e.y}" y2="${e.y}" stroke="${e.sr.color}" stroke-width="2.5" stroke-linecap="round"/>`;
+      g += `<text x="${x(n) + 15}" y="${e.y + 4}" font-size="11" font-weight="700" fill="var(--text-primary)">${money(e.v)}</text>`;
+    }
+    // hover layer
+    g += `<line id="chartHoverLine" x1="0" x2="0" y1="${pad.t}" y2="${Hh - pad.b}" stroke="var(--text-muted)" stroke-width="1" stroke-dasharray="3 3" visibility="hidden"/>`;
+    g += `<g id="chartHoverDots"></g>`;
+    g += `<rect x="${pad.l}" y="${pad.t}" width="${W - pad.l - pad.r}" height="${Hh - pad.t - pad.b}" fill="transparent" id="chartHit"/>`;
+    svg.innerHTML = g;
+    chartState = { cum, n, x, y, W, stats };
+    const hit = el('chartHit');
+    hit.addEventListener('mousemove', onChartHover);
+    hit.addEventListener('mouseleave', hideChartHover);
+    hit.addEventListener('touchstart', (e) => onChartHover(e.touches[0]), { passive: true });
+  }
+
+  function onChartHover(ev) {
+    if (!chartState) return;
+    const svg = el('sessionChart');
+    const rect = svg.getBoundingClientRect();
+    const scale = chartState.W / rect.width;
+    const px = (ev.clientX - rect.left) * scale;
+    const { n, x, y, cum, stats } = chartState;
+    let i = Math.round(((px - x(0)) / (x(n) - x(0))) * n);
+    i = Math.max(0, Math.min(n, i));
+    const line = el('chartHoverLine');
+    line.setAttribute('x1', x(i)); line.setAttribute('x2', x(i)); line.setAttribute('visibility', 'visible');
+    el('chartHoverDots').innerHTML = SERIES.map((sr) => `<circle cx="${x(i)}" cy="${y(cum[sr.key][i])}" r="4.5" fill="${sr.color}" stroke="var(--surface-1)" stroke-width="2"/>`).join('');
+    const tip = el('chartTip');
+    const hs = i > 0 ? stats[i - 1] : null;
+    tip.innerHTML = `<div class="tip-h">${i === 0 ? 'Start' : `After hand #${hs.hand}`}</div>` +
+      SERIES.map((sr) => `<div class="tip-row"><span><i style="background:${sr.color}"></i>${sr.name}</span><strong>${money(cum[sr.key][i])}</strong></div>`).join('') +
+      (hs ? `<div class="tip-row" style="margin-top:4px;color:var(--text-muted)"><span>This hand</span><span>${money(hs.pnl)} PnL</span></div>` : '');
+    show('chartTip');
+    const left = (x(i) / scale) + 12;
+    tip.style.left = `${Math.min(left, rect.width - tip.offsetWidth - 6)}px`;
+    tip.style.top = '8px';
+  }
+  function hideChartHover() {
+    const line = el('chartHoverLine');
+    if (line) line.setAttribute('visibility', 'hidden');
+    const dots = el('chartHoverDots');
+    if (dots) dots.innerHTML = '';
+    hide('chartTip');
+  }
+  window.addEventListener('resize', () => { if (practice && mode === 'practice') renderSession(reveal.stage); });
 
   el('btnAdvice').addEventListener('click', () => {
     if (!practice || !practice.hand) return;
