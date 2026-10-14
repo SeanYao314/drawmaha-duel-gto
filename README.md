@@ -55,6 +55,7 @@ Open the page in two browser windows, or send the room link to a friend, to play
 2. The opponent joins with the code. Rooms are heads-up only.
 3. The host starts the game. The first button is random, and it alternates after that.
 4. Each player sees their 9 cards and both flops, all fully visible, then clicks the cards to discard (4–7 with 9 cards). A marked card drops down and fades, and clicking it again keeps it.
+   - The **Sort** control reorders your cards by **Dealt**, **Rank**, **Suit** or **Best 5**. Best 5 puts your strongest 5-card poker hand first, in reading order (trips before the pair, straights from the top), labels it (e.g. "Best 5 · Flush"), outlines those five cards, and puts a divider before the leftover cards. Your choice is remembered.
    - The draw button always says what will happen, for example "Discard 6 · draw 2" or "Pat — discard 4".
    - IP can line up a keep early, but can't submit it until OOP's draw count is announced.
 5. After IP draws, the turns and rivers come out one at a time. The opponent's final cards flip over, then the three contests and any scoop are shown. A chime plays when you win, with a bigger one for a scoop. The 🔊 button mutes it.

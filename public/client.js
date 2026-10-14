@@ -93,9 +93,33 @@
   let cardSortMode = 'dealt';
   try {
     const s = localStorage.getItem(CARD_SORT_KEY);
-    if (s === 'rank' || s === 'suit' || s === 'dealt') cardSortMode = s;
+    if (s === 'rank' || s === 'suit' || s === 'dealt' || s === 'best5') cardSortMode = s;
   } catch (e) { /* default */ }
+  // 'best5': the strongest 5-card poker hand you can make from your cards comes first,
+  // in the order you'd read it (trips before the pair, quads before the kicker, a
+  // straight from the top), then the leftover cards high to low.
+  function bestFiveOrder(cards) {
+    if (cards.length < 5) return { order: cards.slice(), category: null };
+    const best = window.Poker.bestOfPool(cards);
+    const rankOf = (c) => RANK_ORDER.indexOf(c[0]);
+    const suitOf = (c) => SUIT_ORDER.indexOf(c[1]);
+    const cnt = {};
+    for (const c of best.cards) cnt[c[0]] = (cnt[c[0]] || 0) + 1;
+    const cat = best.score[0];
+    let five;
+    if (cat === 4 || cat === 8) {
+      // straight / straight flush: from the top card down (wheel: 5-4-3-2-A)
+      const hi = best.score[1];
+      const val = (c) => { const r = rankOf(c) + 2; return hi === 5 && r === 14 ? 1 : r; };
+      five = best.cards.slice().sort((a, b) => val(b) - val(a));
+    } else {
+      five = best.cards.slice().sort((a, b) => cnt[b[0]] - cnt[a[0]] || rankOf(b) - rankOf(a) || suitOf(a) - suitOf(b));
+    }
+    const rest = cards.filter((c) => !five.includes(c)).sort((a, b) => rankOf(b) - rankOf(a) || suitOf(a) - suitOf(b));
+    return { order: [...five, ...rest], category: window.Poker.categoryName(best.score) };
+  }
   function sortCards(cards, mode) {
+    if (mode === 'best5') return bestFiveOrder(cards).order;
     if (mode !== 'rank' && mode !== 'suit') return cards.slice();
     const rankOf = (c) => RANK_ORDER.indexOf(c[0]);
     const suitOf = (c) => SUIT_ORDER.indexOf(c[1]);
@@ -458,14 +482,27 @@
     show('drawActions');
     // All cards start fully visible; clicking a card marks it for discard (click again
     // to keep it). Whatever isn't marked is your keep.
-    for (const c of sortCards(vm.hand, cardSortMode)) {
-      const node = cardEl(c, { extra: table.selected.has(c) ? 'marked-discard' : '' });
+    const ordered = sortCards(vm.hand, cardSortMode);
+    const b5 = cardSortMode === 'best5' ? bestFiveOrder(vm.hand) : null;
+    ordered.forEach((c, i) => {
+      if (b5 && i === 0) {
+        const tag = document.createElement('div');
+        tag.className = 'best5-tag';
+        tag.innerHTML = `<span>Best 5</span><strong>${esc(b5.category)}</strong>`;
+        box.appendChild(tag);
+      }
+      const node = cardEl(c, { extra: (table.selected.has(c) ? 'marked-discard' : '') + (b5 && i < 5 ? ' in-best5' : '') });
       node.addEventListener('click', () => {
         if (table.selected.has(c)) table.selected.delete(c); else table.selected.add(c);
         renderTable();
       });
       box.appendChild(node);
-    }
+      if (b5 && i === 4 && ordered.length > 5) {
+        const sep = document.createElement('div');
+        sep.className = 'best5-sep';
+        box.appendChild(sep);
+      }
+    });
 
     const nDisc = table.selected.size, k = vm.hand.length - nDisc;
     const minDisc = vm.hand.length - G.MAX_KEEP, maxDisc = vm.hand.length - G.MIN_KEEP;
