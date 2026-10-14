@@ -1,6 +1,6 @@
 // public/solver-worker.js — runs one phase of lib/solver.js off the main thread.
-// The page keeps a small pool of these (see solver-pool.js) and splits the expensive
-// phases (prefilter rounds and the payoff tensor) across them.
+// The page keeps a small pool of these (see solver-pool.js) and splits every expensive
+// phase (scouting/refinement, group payoffs, real-hand sampling) across them.
 importScripts('/lib/fasteval.js', '/lib/solver.js');
 
 self.onmessage = (e) => {
@@ -8,23 +8,17 @@ self.onmessage = (e) => {
   try {
     const ctx = args.flopA ? Solver.makeContext(args.flopA, args.flopB, args.H || 9) : null;
     let result, transfer = [];
-    if (kind === 'roundA') {
-      result = Solver.prefilterRoundA(ctx, args.pop, args.oppPop, args.from, args.to, args.trials);
-      transfer = [result.buffer];
-    } else if (kind === 'roundB') {
-      result = Solver.prefilterRoundB(ctx, args.pop, args.oppPop, args.oppBestA, args.from, args.to, args.trials, args.perDraw);
-      transfer = [result.buffer];
-    } else if (kind === 'tensor') {
-      result = Solver.buildTensor(ctx, args.popO, args.candO, args.popI, args.candI, args.K, args.from, args.to, args.runs);
-      transfer = [result.S.buffer, result.C.buffer];
-    } else if (kind === 'observer') {
-      result = Solver.buildObserver(ctx, args.cards, args.oppPop, args.oppCand, args.K, args.runs);
-      transfer = [result.S.buffer, result.C.buffer];
-    } else if (kind === 'solve') {
-      result = Solver.solve({
-        ...args,
-        onProgress: (p) => self.postMessage({ id, progress: p })
-      });
+    if (kind === 'scout') {
+      result = Solver.scoutRange(ctx, args.pop, args.from, args.to, args.spec, args.P);
+      transfer = [result.keeps.buffer, result.evs.buffer, result.best.buffer];
+    } else if (kind === 'groupPayoffs') {
+      result = Solver.groupPayoffs(ctx, args.popO, args.keepO, args.groupO, args.popI, args.keepI, args.groupI, args.B, args.from, args.to, args.pairs);
+      transfer = [result.sum.buffer, result.cnt.buffer];
+    } else if (kind === 'solveGroups') {
+      result = Solver.solveGroups(args);
+    } else if (kind === 'observe') {
+      result = Solver.observeRange(ctx, args.cards, args.seat, args.opp, args.s0, args.s1, args.rawCap);
+      transfer = [result.sums.buffer, result.sq.buffer, result.cnt.buffer, result.raw.buffer];
     } else {
       throw new Error('Unknown job ' + kind);
     }

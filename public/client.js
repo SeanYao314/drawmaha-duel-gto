@@ -799,8 +799,9 @@
     return -1;
   }
 
-  function evText(u, stake) {
-    return `<span class="${u > 0.005 ? 'ev-pos' : u < -0.005 ? 'ev-neg' : ''}">${units(u)}</span> <span class="hint-inline" style="color:var(--muted)">(${money(u * stake)})</span>`;
+  function evText(u, stake, se) {
+    const err = se !== undefined ? ` <span class="ev-err">±${se.toFixed(2)}</span>` : '';
+    return `<span class="${u > 0.005 ? 'ev-pos' : u < -0.005 ? 'ev-neg' : ''}">${units(u)}</span>${err} <span class="hint-inline" style="color:var(--muted)">(${money(u * stake)})</span>`;
   }
 
   function mixBar(dist) {
@@ -823,7 +824,7 @@
       show('solveProgress');
       el('solveProgressBar').style.width = `${Math.round(sv.progress * 100)}%`;
       el('studyStatus').textContent = `Solving this flop… ${Math.round(sv.progress * 100)}%`;
-      body.innerHTML = `<p class="hint">The bot solves each flop pair for an approximate equilibrium (${S.PRESETS[h.preset].N} sampled hands per seat, ${window.SolverPool.workerCount} worker thread${window.SolverPool.workerCount > 1 ? 's' : ''}) before it draws.${h.mySeat === 'oop' ? ' You act first, so go ahead — it will be ready by the time it needs it.' : ''}</p>`;
+      body.innerHTML = `<p class="hint">The bot solves each flop pair for an approximate equilibrium (${S.PRESETS[h.preset].M.toLocaleString()} sampled hands per seat, ${window.SolverPool.workerCount} worker thread${window.SolverPool.workerCount > 1 ? 's' : ''}) before it draws.${h.mySeat === 'oop' ? ' You act first, so go ahead — it will be ready by the time it needs it.' : ''}</p>`;
       return;
     }
     hide('solveProgress');
@@ -851,6 +852,8 @@
     const d = iAmIP ? h.studyTab : null;
     const evOf = (ki) => (iAmIP ? meObs.ev[d * NK + ki] : meObs.ev[ki]);
     const freqOf = (ki) => (iAmIP ? meObs.freq[d * NK + ki] : meObs.freq[ki]);
+    const seOf = (ki) => (iAmIP ? meObs.se[d * NK + ki] : meObs.se[ki]);
+    const seDiffOf = (ki) => (iAmIP ? meObs.seDiff[d * NK + ki] : meObs.seDiff[ki]);
 
     const order = Array.from({ length: NK }, (_, i) => i).sort((a, b) => evOf(b) - evOf(a));
     const bestKi = order[0];
@@ -862,11 +865,11 @@
     if (decided && myKi >= 0 && (!iAmIP || d === actualD)) {
       const lost = evOf(bestKi) - evOf(myKi);
       const rank = order.indexOf(myKi) + 1;
-      const inMix = freqOf(myKi) >= 0.05;
-      html += `<div class="verdict">Your keep (${DRAW_NAMES[KD[myKi]].toLowerCase()}) has EV ${evText(evOf(myKi), stake)} per hand — #${rank} of ${NK}.
-        ${lost < 0.02 ? '<strong class="good">That’s the solver’s top choice (or within noise of it).</strong>'
-          : `The best keep was worth ${evText(evOf(bestKi), stake)}: <strong class="bad">you gave up ${units(lost)} stakes (${money(lost * stake, { sign: false })})</strong>.`}
-        ${inMix ? ` The equilibrium plays your keep ${(freqOf(myKi) * 100).toFixed(0)}% of the time.` : ''}</div>`;
+      const tied = myKi !== bestKi && lost <= seDiffOf(myKi);
+      html += `<div class="verdict">Your keep (${DRAW_NAMES[KD[myKi]].toLowerCase()}) has EV ${evText(evOf(myKi), stake, seOf(myKi))} per hand — #${rank} of ${NK}.
+        ${myKi === bestKi ? '<strong class="good">That’s the solver’s top choice.</strong>'
+          : tied ? `<strong class="good">Statistically tied with the best keep</strong> (${evText(evOf(bestKi), stake)}; the ${lost.toFixed(2)} gap is within the ±${seDiffOf(myKi).toFixed(2)} error on the difference).`
+          : `The best keep was worth ${evText(evOf(bestKi), stake, seOf(bestKi))}: <strong class="bad">you gave up ${lost.toFixed(2)} ±${seDiffOf(myKi).toFixed(2)} stakes (${money(lost * stake, { sign: false })})</strong>.`}</div>`;
     }
 
     // --- your keep options ---
@@ -879,10 +882,11 @@
     }
     const rows = order.slice(0, 10);
     if (myKi >= 0 && !rows.includes(myKi)) rows.push(myKi);
-    html += `<table class="ev-table"><tr><th>#</th><th>Keep</th><th>EV / hand</th><th>Draw</th><th>Solver mix</th></tr>`;
+    html += `<table class="ev-table"><tr><th>#</th><th>Keep</th><th>EV / hand</th><th>Draw</th><th>Solver plays</th></tr>`;
     rows.forEach((ki) => {
       const f = freqOf(ki);
-      html += `<tr class="${ki === myKi ? 'chosen' : ''}${ki === bestKi ? ' best' : ''}" data-ki="${ki}"><td>${order.indexOf(ki) + 1}${ki === myKi ? ' <span class="tag-mini">you</span>' : ''}</td><td class="keepcell"></td><td>${evText(evOf(ki), stake)}</td><td>${DRAW_NAMES[KD[ki]]}</td><td>${f >= 0.005 ? `<span class="freq-bar" style="width:${Math.max(2, f * 70)}px"></span>${(f * 100).toFixed(0)}%` : '—'}</td></tr>`;
+      const tie = ki !== bestKi && evOf(bestKi) - evOf(ki) <= seDiffOf(ki);
+      html += `<tr class="${ki === myKi ? 'chosen' : ''}${ki === bestKi ? ' best' : ''}" data-ki="${ki}"><td>${order.indexOf(ki) + 1}${ki === myKi ? ' <span class="tag-mini">you</span>' : ''}${tie ? ' <span class="tag-mini" title="Within the error bar of the best keep">tie</span>' : ''}</td><td class="keepcell"></td><td>${evText(evOf(ki), stake, seOf(ki))}</td><td>${DRAW_NAMES[KD[ki]]}</td><td>${f >= 0.005 ? `<span class="freq-bar" style="width:${Math.max(2, f * 70)}px"></span>${(f * 100).toFixed(0)}%` : '—'}</td></tr>`;
     });
     html += '</table>';
     // best per draw count
@@ -891,6 +895,12 @@
       for (let ki = 0; ki < NK; ki++) if (KD[ki] === x && (b < 0 || evOf(ki) > evOf(b))) b = ki;
       return `${DRAW_NAMES[x]} ${evText(evOf(b), stake)}`;
     }).join(' · ') + '</p>';
+    // hands like yours
+    const sim = meObs.similar;
+    if (sim) {
+      const simMix = iAmIP ? sim.mix[d] : sim.mix;
+      html += `<p style="margin-top:12px"><strong>Hands like yours</strong> <span class="hint-inline" style="color:var(--muted)">(the ${sim.n} sampled hands with the closest EV profile${iAmIP ? `, after ${BOT_NAME} ${d === 0 ? 'pats' : 'draws ' + d}` : ''})</span> play:</p><div class="mix-row"><span>Equilibrium</span>${mixBar(simMix)}</div>`;
+    }
     html += '</div>';
 
     // --- IP: how the best keep shifts with the announcement ---
@@ -910,8 +920,8 @@
       <div class="stat-grid">
         <div class="stat"><div class="k">OOP value / hand</div><div class="v">${evText(vO, stake)}</div></div>
         <div class="stat"><div class="k">IP value / hand</div><div class="v">${evText(-vO, stake)}</div></div>
-        <div class="stat"><div class="k">Exploitability</div><div class="v">${sum.exploitability.toFixed(3)} <span class="hint-inline" style="color:var(--muted)">stakes</span></div></div>
-        <div class="stat"><div class="k">Sampled game</div><div class="v" style="font-size:.85rem">${sum.N}×${sum.N} hands · ${sum.K} keeps each · ${sum.iterations} CFR+ iters</div></div>
+        <div class="stat"><div class="k">Avg gain from deviating</div><div class="v">${sum.exploitability.toFixed(3)} <span class="hint-inline" style="color:var(--muted)">stakes</span></div></div>
+        <div class="stat"><div class="k">Sampled range</div><div class="v" style="font-size:.85rem">${sum.M.toLocaleString()} hands per seat · ${sum.groupsO} groups · ${sum.rounds} refinement rounds</div></div>
       </div>
       <p style="margin-top:12px"><strong>How often OOP announces each draw</strong> (across all hands it could hold here):</p>
       <div class="mix-row"><span>OOP</span>${mixBar(sum.oopDraw)}</div>
@@ -929,11 +939,11 @@
       const mix = Array.from({ length: NK }, (_, i) => i).filter((ki) => bf(ki) >= 0.05).sort((a, b) => bf(b) - bf(a)).slice(0, 4);
       html += `<div class="study-section"><h4>${BOT_NAME}'s draw</h4><div class="bot-dealt" id="botDealt"><span class="discard-label">Dealt</span></div><p>${h.botSeat === 'ip' ? `After you ${h.myDrawn.length === 0 ? 'patted' : 'drew ' + h.myDrawn.length}, it` : 'Acting first, it'} was choosing between:</p>
         <table class="ev-table"><tr><th>Keep</th><th>EV / hand</th><th>Draw</th><th>Mix</th></tr>
-        ${mix.map((ki) => `<tr data-bot-ki="${ki}" class="${ki === h.botKi ? 'chosen' : ''}"><td class="keepcell"></td><td>${evText(be(ki), stake)}</td><td>${DRAW_NAMES[KD[ki]]}</td><td>${(bf(ki) * 100).toFixed(0)}%${ki === h.botKi ? ' <span class="tag-mini">played</span>' : ''}</td></tr>`).join('')}
+        ${mix.map((ki) => `<tr data-bot-ki="${ki}" class="${ki === h.botKi ? 'chosen' : ''}"><td class="keepcell"></td><td>${evText(be(ki), stake, bd === null ? botObs.se[ki] : botObs.se[bd * NK + ki])}</td><td>${DRAW_NAMES[KD[ki]]}</td><td>${(bf(ki) * 100).toFixed(0)}%${ki === h.botKi ? ' <span class="tag-mini">played</span>' : ''}</td></tr>`).join('')}
         </table></div>`;
     }
 
-    html += `<p class="study-foot">How this works: the solver samples ${sum.N} hands for each seat on these two flops, scores every keep with Monte Carlo runouts, keeps the ${sum.K} best candidates per hand (spread across all four draw counts), and runs CFR+ on the resulting game — OOP picks a keep; IP sees only the draw count and picks its own. Your hand and the bot's are evaluated against that equilibrium with all ${NK} keeps, and neither one is visible to the other side. EVs are in stakes per hand (a contest = 1, a scoop = 6) and carry Monte Carlo noise of a few hundredths; treat near-ties as ties. The mix column is how often the solver's own regret minimiser played each keep — when it splits between options, they are usually within that noise of each other. Exploitability is measured inside the sampled game, so it understates the true gap to a full-game equilibrium.</p>`;
+    html += `<p class="study-foot">How this works: the solver deals ${sum.M.toLocaleString()} random hands to each seat on these two flops and races every keep of every hand over 100+ runouts to find its best keep at each draw count. It groups hands with similar EV profiles (${sum.groupsO} groups), solves the group game with CFR+ (OOP picks a draw count; IP sees it and picks its own), then lets every sampled hand re-optimize against the other side for ${sum.rounds} rounds. Your hand and the bot's are scored with all ${NK} keeps against ${sum.obs.toLocaleString()} opponent hands drawn from that solved range (per announcement, when in position); neither real hand is visible to the other side. EVs are stakes per hand (a contest = 1, a scoop = 6); ± is the sampling error of your hand's evaluation — re-solving with a fresh sample of hands moves EVs by roughly that much again on Deep, less on Max/Ultra. "Solver plays" is the best keep plus any keep statistically tied with it, which is also how the bot picks. "Avg gain from deviating" is how much a sampled hand could still gain by switching strategy — near zero means the solve has settled.</p>`;
 
     // Tables scroll sideways on narrow phones instead of crushing the card rows.
     html = html.replace(/<table class="ev-table">/g, '<div class="table-scroll"><table class="ev-table">').replace(/<\/table>/g, '</table></div>');

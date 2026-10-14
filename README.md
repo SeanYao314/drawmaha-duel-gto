@@ -66,63 +66,74 @@ Refreshing or reconnecting puts you back in your seat. Rooms live in server memo
 
 The **Practice vs Bot** tab runs entirely in your browser. There's no room and no server round-trip. You and the bot alternate positions.
 
-Before the bot draws, it solves the current flop pair (details below). The solve runs in Web Workers spread across your CPU cores, so the page stays responsive.
+Before the bot draws, it solves the current flop pair (details below). The solve runs in Web Workers spread across your CPU cores, so the page stays responsive. If you're out of position, you act while it solves.
 
-| Depth | Hands per seat | Candidate keeps per hand | Runouts per pairing (population / your hand) | Typical time on an 8-core laptop |
-|---|---|---|---|---|
-| Fast | 70 | 12 | 2 / 10 | about 1 s |
-| Standard | 110 | 12 | 3 / 14 | a couple of seconds |
-| **Deep** (default) | 160 | 16 | 3 / 20 | a few seconds |
-| Max | 220 | 16 | 4 / 28 | about 10 s (more with 10 cards) |
+| Depth | Hands sampled per seat | Groups | Refinement rounds | Opponent samples for your hand | Single-core time (9 cards) |
+|---|---|---|---|---|---|
+| Fast | 300 | 20 | 2 | 2,000 | ~7 s |
+| Standard | 700 | 32 | 2 | 4,000 | ~15 s |
+| **Deep** (default) | 1,400 | 48 | 2 | 7,000 | ~33 s |
+| Max | 2,400 | 64 | 3 | 10,000 | ~75 s |
+| Ultra | 3,600 | 80 | 3 | 16,000 | ~2 min |
 
-The 10-card game is the slowest, because each hand has 627 ways to keep. The study panel shows the actual time for each solve. Your last practice settings are remembered.
-
-If you're out of position, you act while it solves.
+The work splits across your cores, so divide those times by roughly the number of cores you have, minus one. The 10-card game takes longest, because each hand has 627 ways to keep. The study panel shows the actual time for each solve. Your last practice settings are remembered.
 
 The **Solver study** panel stays hidden until the hand is over, unless you click **Peek at solver**. It shows:
 
-- **Verdict.** Your keep's EV in stakes and dollars per hand, its rank among all possible keeps (372 with 9 cards), and how much EV you gave up compared with the best keep.
-- **Your keep options.** The top keeps for your hand, with EV and how often the solver plays each one, plus the best keep for each draw count.
+- **Verdict.** Your keep's EV per hand (± one standard error), its rank among all possible keeps, and how much EV you gave up compared with the best keep. If the gap is within the error bar, it says the two are statistically tied.
+- **Your keep options.** The top keeps with EV ± error, a **tie** tag on any keep the solver can't separate from the best, and how the solver plays your hand. It also shows the best keep for each draw count, and **hands like yours**: the equilibrium draw mix of the 40 sampled hands whose EV profile is closest to yours.
   - When you're IP, there's a tab for each possible announcement ("bot pats", "bot draws 1", and so on), with the real one marked.
   - A second table shows how your best keep changes with the announcement.
 - **This flop's equilibrium.**
   - The value of being OOP or IP on this flop.
-  - How often OOP announces each draw count, across every hand it could hold here.
-  - How IP responds to each announcement, and how much each announcement is worth to IP.
-  - An exploitability estimate.
-- **The bot's draw.** Once the cards are shown: its full dealt hand (kept cards highlighted, discards faded), which keeps it was mixing between, and which one it played. Its discards also appear next to its final hand on the table.
+  - How often OOP announces each draw count, and how IP responds to each announcement.
+  - "Avg gain from deviating": how much a sampled hand could still gain by switching strategy. Near zero means the solve has settled.
+- **The bot's draw.** Once the cards are shown: its full dealt hand (kept cards highlighted, discards faded), which keeps it was choosing between, and which one it played. Its discards also appear next to its final hand on the table.
 
 ### How the solver works (lib/solver.js)
 
-There's no betting, so all of the strategy is in the two keep decisions and in what OOP's draw count gives away. Once the flops are out, the rest of the hand is a small two-player game with hidden information. The exact game is far too big to solve: with 9 cards, about 1.2 billion hands per player and 372 ways to keep from each. So each flop pair is solved as a **sampled abstraction**:
+There's no betting, so all of the strategy is in the two keep decisions and in what OOP's draw count gives away. Once the flops are out, the rest of the hand is a small two-player game with hidden information. The exact game is far too big to solve: with 9 cards, about 1.2 billion hands per player and 372 ways to keep from each. So each flop pair is solved on a large sample of each player's range:
 
-1. **Population.** Sample N random hands for each seat (70 / 110 / 160 / 220 for Fast / Standard / Deep / Max). Neither player's real hand is in the population, so the solved strategies use only public information.
-2. **Candidate keeps.** Score every keep (372 with 9 cards) for every population hand with Monte Carlo runouts, in two rounds:
-   - Round A: against a crude field.
-   - Round B: against the field's round-A choices.
+1. **Population.** Deal thousands of random hands to each seat. Neither player's real hand is in the sample, so the solved strategies use only public information.
+2. **Keep scouting.** For every sampled hand, race every keep to find its best keep for each draw count:
+   - first all keeps over about 12–20 runouts;
+   - then the best 6 per draw count over 100+ fresh runouts.
 
-   Each hand keeps its best few candidates *for each draw count* (12, or 16 on Deep). Keeping candidates for every draw count is what lets a hand choose how much to reveal.
-3. **Payoff tensor.** For every OOP hand × IP hand pairing, run random scenarios (both players' draws, plus turns and rivers). Record the payoff of every candidate keep against every candidate keep.
-4. **CFR+.** Run counterfactual regret minimisation on that finite game:
-   - OOP's information set is its hand.
-   - IP's information set is its hand plus the announced draw count.
-   - A small "tremble" keeps rarely-used announcements reachable, so IP still learns sensible replies to them.
-   - Exploitability inside the sampled game is about 0.001 stakes after 200 iterations.
-5. **Observers.** Your real hand and the bot's are evaluated against the population with every possible keep and more scenarios. They run their own regret minimisers alongside the population but never feed back into it. That's why the bot never sees your hand, and the study panel never sees the bot's.
-   - The bot draws by sampling its own mix, ignoring weights under 5%.
-   - When you're IP, the bot's announcement is read from its real draw count.
+   To make that affordable, the solver uses:
+   - a **bank** of pre-dealt turn/river pairs with precomputed tables of every hole pair's PLO value, so valuing a hand on a bank board is a few array reads;
+   - for each bank board, opponent outcomes dealt in advance, so one runout of your hand is scored against several opponents at once.
 
-Speed comes from `lib/fasteval.js`, a table-driven 5-card evaluator (about 25–40 ns per hand, ~57 KB of tables). It also uses a "pair table" trick: a PLO5 hand's value is the best of its 10 two-card pairs on the board, so once every pair is scored, every keep can be valued from array reads.
+   Precision matters here. With about 10 runouts per hand, a hand picks a keep that's typically 0.4–0.8 stakes worse than its best. With racing, it's 0.02–0.04.
+3. **Group similar hands.** Cluster hands by their "EV at pat / draw 1 / draw 2 / draw 3" profile (k-means), estimate group-vs-group payoffs for every pair of draw counts, and solve that small game with CFR+. OOP's group picks a draw count; IP's group sees it and picks its own. A small "tremble" keeps rare announcements reachable, so IP still learns sensible replies to them.
+4. **Refine every hand.** Grouping on its own blurs decisions, because hands in one group don't all want the same draw count. So, starting from the group solution, every sampled hand re-optimizes on its own, alternating between the seats for a few rounds and averaging strategies (fictitious play):
+   - OOP hands respond to IP's actual replies.
+   - IP hands respond to each announcement, given which OOP hands make it.
+5. **Your hand and the bot's.** Each real hand is scored with every keep against thousands of opponent hands drawn from the solved range. When you're IP, the opponents come from the hands that would have made that announcement. Every keep is scored on the same samples, so differences between keeps get proper error bars.
+   - The bot plays the best keep for its hand, picking at random among keeps that are statistically tied with it.
+   - Neither real hand ever feeds into the population, so the bot never sees your cards and the study panel never sees the bot's.
+
+**How steady it is.** I re-ran the five-solves-per-hand test that showed the old solver's noise, on the same three hands, using Deep:
+
+| Measurement (1 s.d. across solves) | Old solver (Deep) | New solver (Deep) | New solver (Ultra)* |
+|---|---|---|---|
+| EV of a given keep | 0.12–0.30 | 0.03–0.08 | 0.01–0.07 (mostly 0.02–0.05) |
+| Gap between two different plans (pat vs draw) | 0.17–0.38 | 0.06–0.09 | 0.03–0.08 |
+| Value of position on the flop | 0.05–0.15 | 0.02–0.04 | 0.02–0.03 |
+| Best keep agreed across solves | 13 of 15 | 12 of 15 | 8 of 9 |
+
+\* Ultra was run 3 times per hand instead of 5 (each single-threaded Ultra solve takes about 2 minutes), so its spreads are rougher estimates.
+
+The agreement count barely moved, and that's expected. On the close hand, the top three keeps really are within 0.03 of each other. The new panel marks them as ties instead of pretending one is clearly best. The ± on each EV is the sampling error of your hand's own evaluation, about 0.03 on Deep. Re-solving the flop with a new sample of hands adds roughly that much again, which is what Max and Ultra reduce.
 
 **Known limits.** Treat the output as a strong study aid, not an exact solution.
+- Scouting ignores card clashes between a hand and the pre-dealt opponents (it only ranks that hand's own keeps). The group payoffs and real-hand evaluations deal exactly.
 - The solver ignores the blocking effect of the *opponent's discards*. Only the cards each side keeps are forced apart.
-- EVs carry Monte Carlo noise of a few hundredths of a stake. When the solver splits its mix between keeps, they're usually within that noise of each other.
-- Exploitability is measured inside the sampled game, so it understates the gap to a true full-game equilibrium.
+- "Avg gain from deviating" uses scouting EVs, which carry a little noise, so it slightly overstates the remaining gap.
 
 To solve a flop from the command line (single-threaded), run:
 
 ```bash
-node experiments/solve_flop.js "Kh 9d 4s" "Jc Jd 6h" --oop "Ah Kd Qs Jh Td 9h 9c 5c 2d" --ip "As Ks 8h 8c 7d 6s 5h 3c 2c" --preset standard
+node experiments/solve_flop.js "Kh 9d 4s" "Jc Jd 6h" --oop "Ah Kd Qs Jh Td 9h 9c 5c 2d" --ip "As Ks 8h 8c 7d 6s 5h 3c 2c" --preset deep
 ```
 
 ## Deploying so friends can join
@@ -135,8 +146,8 @@ Deployment works the same way as the Taiwanese Poker project. Any host that runs
 server.js                 HTTP server: static files, /lib/*.js, room API, SSE push
 lib/poker.js              Readable 5-card evaluator + PLO construction (live scoring, display)
 lib/game.js               Drawmaha Duel rules: deal, keep validation, 3 contests, scoop
-lib/fasteval.js           Table-driven evaluator for the solver
-lib/solver.js             Sampled-game CFR+ solver (runs in Node and in Web Workers)
+lib/fasteval.js           Table-driven evaluator + whole-board pair tables for the solver
+lib/solver.js             Range-sampling solver: keep racing, hand grouping + CFR+, per-hand refinement
 public/index.html         App shell (landing / lobby / table)
 public/style.css          Styling (same look as Taiwanese Poker; 4-color deck)
 public/client.js          Live game client, practice controller, study panel

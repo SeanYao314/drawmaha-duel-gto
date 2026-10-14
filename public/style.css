@@ -418,6 +418,7 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .ev-table .mini { display: flex; gap: 3px; flex-wrap: nowrap; }
 .ev-table td { white-space: nowrap; }
 .ev-table .playing-card.small, .contest-table .playing-card.small { width: 32px; height: 46px; font-size: .82rem; border-radius: 6px; }
+.ev-err { color: var(--muted); font-size: .72rem; font-weight: 600; }
 .ev-pos { color: #1a7f37; font-weight: 700; } .ev-neg { color: var(--danger); font-weight: 700; }
 .freq-bar { display: inline-block; height: 8px; border-radius: 4px; background: #7b5cd6; vertical-align: middle; margin-right: 6px; min-width: 1px; }
 .tag-mini { font-size: .66rem; font-weight: 800; padding: 1px 6px; border-radius: 999px; background: #eef0f2; color: var(--muted); text-transform: uppercase; }

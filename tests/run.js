@@ -123,7 +123,7 @@ test('a 7-card and a 10-card solve both run and return valid strategies', () => 
     const res = S.runAll({
       flopA: d.slice(0, 3), flopB: d.slice(3, 6),
       observers: [{ id: 'me', seat: 'ip', cards: d.slice(6, 6 + H) }],
-      overrides: { N: 20, trialsA: 3, trialsB: 4, runs: 1, obsRuns: 2, iterations: 30 }
+      overrides: { M: 60, B: 8, R: 48, Q: 4, tA1: 4, tA2: 10, tC1: 4, tC2: 10, k2: 3, pairs: 8, obs: 300, iterations: 200, rounds: 1, alphas: [0.6] }
     });
     const o = res.observers[0];
     assert.strictEqual(o.ev.length, 4 * S.layout(H).NKEEPS);
@@ -146,7 +146,7 @@ test('a tiny solve runs, returns valid mixed strategies, and finds the obvious k
   const res = S.runAll({
     flopA: cards('2c 7d 3h'), flopB: cards('4c 8d 2h'),
     observers: [{ id: 'me', seat: 'oop', cards: cards('As Ks Qs Js Ts 5d 6h 9c 9d') }],
-    overrides: { N: 40, trialsA: 6, trialsB: 10, runs: 2, obsRuns: 10, iterations: 80 }
+    overrides: { M: 150, B: 12, R: 96, Q: 6, tA1: 8, tA2: 30, tC1: 8, tC2: 30, k2: 4, pairs: 16, obs: 1500, iterations: 400, rounds: 1, alphas: [0.6] }
   });
   const o = res.observers[0];
   const sumF = o.freq.reduce((a, b) => a + b, 0);
@@ -157,6 +157,22 @@ test('a tiny solve runs, returns valid mixed strategies, and finds the obvious k
   const hand = cards('As Ks Qs Js Ts 5d 6h 9c 9d');
   const royal = order.findIndex((ki) => S.KEEP_DRAW[ki] === 0 && ['As', 'Ks', 'Qs', 'Js', 'Ts'].every((c) => S.keepCards(hand, ki).includes(c)));
   assert.ok(royal < 3, 'royal pat ranked #' + (royal + 1));
+});
+
+test('fast pair tables agree with the direct pair evaluator', () => {
+  const nf = new Int32Array(169), fl = new Int32Array(676);
+  for (let i = 0; i < 2000; i++) {
+    const d = P.shuffle(P.freshDeck()).map(F.toInt);
+    F.boardPairTables(d.slice(0, 5), nf, 0, fl, 0);
+    for (let t = 0; t < 10; t++) assert.strictEqual(F.pairValueTable(nf, 0, fl, 0, d[5 + 2 * t], d[6 + 2 * t]), F.pairOnBoard(d[5 + 2 * t], d[6 + 2 * t], d.slice(0, 5)));
+  }
+});
+test('group game: solved strategies are valid distributions', () => {
+  const B = 3, sum = new Float64Array(B * 16 * B), cnt = new Float64Array(B * 16 * B).fill(1);
+  for (let i = 0; i < sum.length; i++) sum[i] = Math.sin(i) * 2;
+  const r = S.solveGroups({ sum, cnt, B, pO: Float64Array.from([0.5, 0.3, 0.2]), pI: Float64Array.from([0.2, 0.3, 0.5]), iterations: 500 });
+  for (let b = 0; b < B; b++) assert.ok(Math.abs(r.sigO.slice(b * 4, b * 4 + 4).reduce((x, y) => x + y, 0) - 1) < 1e-9);
+  assert.ok(r.summary.exploitability < 0.05, 'exploitability ' + r.summary.exploitability);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

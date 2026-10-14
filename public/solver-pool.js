@@ -1,6 +1,6 @@
 // public/solver-pool.js — spreads a flop solve (lib/solver.js) across Web Workers.
 //
-// Exposes window.SolverPool.solveFlop({ flopA, flopB, observers, preset, onProgress }),
+// Exposes window.SolverPool.solveFlop({ flopA, flopB, observers, handSize, preset, onProgress }),
 // which resolves to { summary, observers, preset } exactly like Solver.runAll() does in
 // Node, just several times faster on a multi-core machine. Starting a new solve (or
 // calling cancel()) abandons whatever was running.
@@ -77,62 +77,85 @@
     return out;
   }
 
-  async function solveFlop({ flopA, flopB, observers = [], handSize = 9, preset = 'standard', onProgress = () => {} }) {
+  async function solveFlop({ flopA, flopB, observers = [], handSize = 9, preset = 'deep', onProgress = () => {} }) {
     if (pending.size || queue.length) cancel();
     const gen = ++generation;
     const check = () => { if (gen !== generation) throw new Error('cancelled'); };
-    const P = S.PRESETS[preset] || S.PRESETS.standard;
-    const N = P.N, K = P.perDraw * 4;
+    const P = S.PRESETS[preset] || S.PRESETS.deep;
+    const H = handSize, M = P.M;
     const fa = flopA.map(F.toInt), fb = flopB.map(F.toInt);
-    const H = handSize;
     const ctx = S.makeContext(fa, fb, H);
-    const popO = S.samplePopulation(ctx, N), popI = S.samplePopulation(ctx, N);
+    const L = ctx.L;
+    const popO = S.samplePopulation(ctx, M), popI = S.samplePopulation(ctx, M);
     const base = { flopA: fa, flopB: fb, H };
+    const ident = S.identityGroups(M);
 
-    // Progress bookkeeping: each phase owns a slice of the bar.
+    // Progress: each phase owns a slice of the bar (weights roughly match run time).
+    const W = { scout: 0.1, group: 0.08, round: 0.7 / P.rounds, obs: 0.12 };
     let done = 0;
-    const phase = (weight, parts) => () => { done += weight / parts; onProgress(Math.min(0.99, done)); };
-    const splits = ranges(N, WORKER_COUNT * 2);
+    const tickFor = (weight, parts) => () => { done += weight / parts; onProgress(Math.min(0.99, done)); };
+    const splits = ranges(M, WORKER_COUNT * 3);
 
-    // Round A (both seats)
-    let tick = phase(0.1, splits.length * 2);
-    const [aO, aI] = await Promise.all([popO, popI].map((pop, s) => {
-      const opp = s === 0 ? popI : popO;
-      return Promise.all(splits.map(([from, to]) => run('roundA', { ...base, pop, oppPop: opp, from, to, trials: P.trialsA }).then((r) => { tick(); return r; })))
-        .then((chunks) => concat(Int16Array, chunks));
-    }));
+    // Scout hands [0, M) of `pop` against `spec` across the pool; concatenate results.
+    const scoutAll = async (pop, spec, weight) => {
+      const tick = tickFor(weight, splits.length);
+      const parts = await Promise.all(splits.map(([from, to]) => run('scout', { ...base, pop, from, to, spec, P }).then((r) => { tick(); return r; })));
+      check();
+      return { keeps: concat(Int16Array, parts.map((r) => r.keeps)), evs: concat(Float32Array, parts.map((r) => r.evs)), best: concat(Int16Array, parts.map((r) => r.best)) };
+    };
+
+    // 1. Scouting: every hand's best keep per draw count vs a made-hand field.
+    const [aO, aI] = await Promise.all([
+      scoutAll(popO, { mode: 'A', oppPop: popI }, W.scout / 2),
+      scoutAll(popI, { mode: 'A', oppPop: popO }, W.scout / 2)
+    ]);
+    let keepO = aO.keeps, evO = aO.evs;
+    let keepI = new Int16Array(M * 16), evI = new Float32Array(M * 16);
+    for (let j = 0; j < M; j++) for (let dO = 0; dO < 4; dO++) for (let dI = 0; dI < 4; dI++) {
+      keepI[j * 16 + dO * 4 + dI] = aI.keeps[j * 4 + dI]; evI[j * 16 + dO * 4 + dI] = aI.evs[j * 4 + dI];
+    }
+
+    // 2. Group similar hands and solve the group game.
+    const kmO = S.kmeans(S.featuresOOP(evO, M), 4, P.B), kmI = S.kmeans(S.featuresIP(evI, M), 4, P.B);
+    const B = Math.max(kmO.k, kmI.k);
+    const pO = new Float64Array(B), pI = new Float64Array(B);
+    for (let h = 0; h < M; h++) { pO[kmO.assign[h]] += 1 / M; pI[kmI.assign[h]] += 1 / M; }
+    let tick = tickFor(W.group * 0.8, splits.length);
+    const payParts = await Promise.all(splits.map(([from, to]) => run('groupPayoffs', { ...base, popO, keepO, groupO: kmO.assign, popI, keepI, groupI: kmI.assign, B, from, to, pairs: P.pairs }).then((r) => { tick(); return r; })));
     check();
-
-    // Round B (both seats) → candidate keeps
-    tick = phase(0.15, splits.length * 2);
-    const [candO, candI] = await Promise.all([0, 1].map((s) => {
-      const pop = s === 0 ? popO : popI, opp = s === 0 ? popI : popO, oppBest = s === 0 ? aI : aO;
-      return Promise.all(splits.map(([from, to]) => run('roundB', { ...base, pop, oppPop: opp, oppBestA: oppBest, from, to, trials: P.trialsB, perDraw: P.perDraw }).then((r) => { tick(); return r; })))
-        .then((chunks) => concat(Int16Array, chunks));
-    }));
+    const sum = new Float64Array(B * 16 * B), cnt = new Float64Array(B * 16 * B);
+    for (const part of payParts) for (let i = 0; i < sum.length; i++) { sum[i] += part.sum[i]; cnt[i] += part.cnt[i]; }
+    const G = await run('solveGroups', { sum, cnt, B, pO, pI, iterations: P.iterations });
     check();
+    done += W.group * 0.2; onProgress(done);
+    let { sigO, sigI } = S.expandGroupStrategies({ kmO, kmI, sigO: G.sigO, sigI: G.sigI }, M);
 
-    // Payoff tensor (split by OOP hand) + observers, all queued together.
-    const tSplits = ranges(N, WORKER_COUNT * 3);
-    tick = phase(0.55, tSplits.length + observers.length);
-    const tensorP = Promise.all(tSplits.map(([from, to]) => run('tensor', { ...base, popO, candO, popI, candI, K, from, to, runs: P.runs }).then((r) => { tick(); return r; })))
-      .then((chunks) => ({ S: concat(Int16Array, chunks.map((c) => c.S)), C: concat(Uint8Array, chunks.map((c) => c.C)) }));
-    const obsP = Promise.all(observers.map((o) => {
+    // 3. Per-hand refinement rounds (each hand best-responds; strategies averaged).
+    for (let it = 1; it <= P.rounds; it++) {
+      const alpha = P.alphas[it - 1];
+      const rO = await scoutAll(popO, { mode: 'C-OOP', oppPop: popI, keepI, groupI: ident, sigI }, W.round * 0.3);
+      keepO = rO.keeps; evO = rO.evs;
+      S.updateOOP(sigO, evO, M, alpha);
+      const cw = S.posteriorTables(sigO, ident, M);
+      const rI = await scoutAll(popI, { mode: 'C-IP', oppPop: popO, keepO, cw }, W.round * 0.7);
+      keepI = rI.keeps; evI = rI.evs;
+      S.updateIP(sigI, evI, M, alpha);
+    }
+    const R = { M, popO, popI, keepO, keepI, evO, evI, sigO, sigI, groupsO: kmO.k, groupsI: kmI.k };
+
+    // 4. The real hands, sampled in parallel chunks.
+    const obsSplits = ranges(P.obs, Math.max(1, Math.floor(WORKER_COUNT * 2 / Math.max(1, observers.length))));
+    tick = tickFor(W.obs, obsSplits.length * observers.length);
+    const obsResults = await Promise.all(observers.map(async (o) => {
       const cards = o.cards.map(F.toInt);
-      const oppPop = o.seat === 'oop' ? popI : popO, oppCand = o.seat === 'oop' ? candI : candO;
-      return run('observer', { ...base, cards, oppPop, oppCand, K, runs: P.obsRuns }).then((r) => { tick(); return { id: o.id, seat: o.seat, S: r.S, C: r.C }; });
+      const opp = S.opponentRange(o.seat, R);
+      const chunks = await Promise.all(obsSplits.map(([s0, s1]) => run('observe', { ...base, cards, seat: o.seat, opp, s0, s1, rawCap: S.RAW_CAP }).then((r) => { tick(); return r; })));
+      const fin = S.finalizeObserver(L, o.seat, chunks);
+      return { id: o.id, seat: o.seat, ...fin, similar: S.similarHandsMix(L, o.seat, fin, R) };
     }));
-    const [tensor, obs] = await Promise.all([tensorP, obsP]);
-    check();
-
-    // CFR+ on one worker.
-    const before = done;
-    // Hand the big arrays over to the solve worker instead of copying them.
-    const transfer = [tensor.S.buffer, tensor.C.buffer, ...obs.flatMap((o) => [o.S.buffer, o.C.buffer])];
-    const result = await run('solve', { N, K, H, candO, candI, tensor, observers: obs, iterations: P.iterations }, (p) => onProgress(Math.min(0.99, before + 0.2 * p)), transfer);
     check();
     onProgress(1);
-    return { ...result, preset };
+    return { summary: S.summaryOf(R, P), observers: obsResults, preset };
   }
 
   window.SolverPool = { solveFlop, cancel, workerCount: WORKER_COUNT };
