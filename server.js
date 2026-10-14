@@ -28,7 +28,7 @@ const MIME = {
 /**
  * In-memory room store (rooms vanish on restart — fine for a casual game). Shape:
  * rooms[code] = {
- *   code, stake, phase: 'lobby'|'drawing'|'results', hostId, handNumber,
+ *   code, stake, handSize (7–10 cards dealt), phase: 'lobby'|'drawing'|'results', hostId, handNumber,
  *   players: [{ id, token, name, sseRes, connected, hand, keep, drawn }],
  *   buttonId,            // player in position this hand (alternates every hand)
  *   acting: 'oop'|'ip',  // who must draw next while phase === 'drawing'
@@ -59,6 +59,7 @@ function publicRoomState(room) {
     hostId: room.hostId,
     handNumber: room.handNumber,
     stake: room.stake,
+    handSize: room.handSize,
     players: room.players.map((p) => ({ id: p.id, name: p.name, connected: p.connected })),
     cumulative: room.cumulative,
     oopId: drawing ? oopId(room) : null,
@@ -94,7 +95,7 @@ function dealNewHand(room) {
   // Button alternates every hand; the very first button is random.
   if (!room.buttonId) room.buttonId = room.players[Math.random() < 0.5 ? 0 : 1].id;
   else room.buttonId = room.players.find((p) => p.id !== room.buttonId).id;
-  const { deck, flopA, flopB, hands } = G.dealHand(room.players.map((p) => p.id));
+  const { deck, flopA, flopB, hands } = G.dealHand(room.players.map((p) => p.id), room.handSize);
   Object.assign(room, { deck, flopA, flopB, boardA: null, boardB: null, phase: 'drawing', acting: 'oop', announce: {}, lastResults: null });
   for (const p of room.players) {
     p.hand = hands[p.id];
@@ -120,13 +121,17 @@ function finishHand(room) {
   room.lastResults = {
     handNumber: room.handNumber,
     stake: room.stake,
+    handSize: room.handSize,
     boardA: room.boardA,
     boardB: room.boardB,
     oopId: o.id,
     ipId: i.id,
     players: [o, i].map((p) => ({
       id: p.id, name: p.name, kept: p.keep, drawn: p.drawn, final: finalOf(p),
-      discards: G.discardCount(p.keep.length), draws: p.drawn.length
+      // Discards are shown at showdown (after the hand they give nothing away, and
+      // seeing them is how you learn what the other player was thinking).
+      discarded: p.hand.filter((c) => !p.keep.includes(c)),
+      discards: G.discardCount(p.keep.length, room.handSize), draws: p.drawn.length
     })),
     evals: res.evals,
     contests: res.contests,
@@ -193,10 +198,11 @@ const API_HANDLERS = {
   '/api/create_room': (body) => {
     const name = String(body.name || 'Host').trim().slice(0, 20) || 'Host';
     const stake = STAKE_OPTIONS.includes(Number(body.stake)) ? Number(body.stake) : 100;
+    const handSize = G.HAND_SIZES.includes(Number(body.handSize)) ? Number(body.handSize) : G.HAND_SIZE;
     const host = newPlayer(name);
     const code = makeRoomCode();
     rooms.set(code, {
-      code, stake, phase: 'lobby', hostId: host.id, handNumber: 0,
+      code, stake, handSize, phase: 'lobby', hostId: host.id, handNumber: 0,
       players: [host], buttonId: null, acting: null,
       deck: null, flopA: null, flopB: null, boardA: null, boardB: null,
       announce: {}, cumulative: { [host.id]: 0 }, history: [], lastResults: null
@@ -241,7 +247,7 @@ const API_HANDLERS = {
     // Keep in dealt order so the hand reads the way the player saw it.
     player.keep = player.hand.filter((c) => body.keep.includes(c));
     player.drawn = room.deck.splice(0, G.drawCount(player.keep.length));
-    room.announce[player.id] = { discards: G.discardCount(player.keep.length), draws: player.drawn.length };
+    room.announce[player.id] = { discards: G.discardCount(player.keep.length, room.handSize), draws: player.drawn.length };
     sendTo(player, 'your_hand', privateHand(player));
     if (seat === 'oop') {
       room.acting = 'ip';

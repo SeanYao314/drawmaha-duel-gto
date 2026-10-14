@@ -134,6 +134,17 @@
     d.textContent = label;
     return d;
   }
+  // The cards a player threw away, shown small and faded beside their final hand.
+  function discardGroup(cards, animate) {
+    const g = document.createElement('div');
+    g.className = 'discard-group' + (animate ? ' card-reveal' : '');
+    g.innerHTML = '<span class="discard-label">Discarded</span>';
+    const row = document.createElement('div');
+    row.className = 'discard-cards';
+    cards.forEach((c) => row.appendChild(cardEl(c, { small: true, extra: 'static' })));
+    g.appendChild(row);
+    return g;
+  }
   function miniCards(cards, { highlight = [], drawn = [] } = {}) {
     const wrap = document.createElement('div');
     wrap.className = 'mini';
@@ -192,7 +203,7 @@
 
   el('btnCreate').addEventListener('click', async () => {
     const name = el('createName').value.trim() || 'Host';
-    const res = await api('/api/create_room', { name, stake: Number(el('createStake').value) });
+    const res = await api('/api/create_room', { name, stake: Number(el('createStake').value), handSize: Number(el('createHandSize').value) });
     if (!res.ok) return landingError(res.error);
     Object.assign(live, { code: res.code, playerId: res.playerId, token: res.token, room: null, my: null, results: null });
     mode = 'live';
@@ -239,7 +250,7 @@
     el('lobbyCode').textContent = room.code;
     el('shareLink').value = `${location.origin}/?join=${room.code}`;
     el('lobbyCount').textContent = room.players.length;
-    el('lobbyStake').textContent = `Stakes: ${money(room.stake, { sign: false })} per contest · ${money(room.stake * 6, { sign: false })} for a scoop`;
+    el('lobbyStake').textContent = `${room.handSize || 9}-card Drawmaha · ${money(room.stake, { sign: false })} per contest · ${money(room.stake * 6, { sign: false })} for a scoop`;
     const list = el('lobbyPlayers');
     list.innerHTML = '';
     room.players.forEach((p) => {
@@ -276,6 +287,7 @@
       mode: 'live',
       handNumber: room.handNumber,
       stake: room.stake,
+      handSize: room.handSize || 9,
       meId: me.id, oppId: opp ? opp.id : null,
       meName: me.name, oppName: opp ? opp.name : 'Opponent', oppConnected: opp ? opp.connected : false,
       meSeat, oppSeat: other(meSeat),
@@ -314,6 +326,9 @@
     }
     el('handNumber').textContent = vm.handNumber;
     toggle('modeTag', vm.mode === 'practice');
+    el('sizeTag').textContent = `${vm.handSize}-CARD`;
+    toggle('sizeTag', vm.handSize !== 9);
+    toggle('practiceSettings', vm.mode === 'practice');
     toggle('btnPracticeBack', vm.mode === 'practice');
     if (vm.mode === 'practice') hide('roomBadge');
 
@@ -351,7 +366,7 @@
     const status = el('oppStatus');
     status.className = 'seat-status';
     if (vm.oppAnnounce) {
-      status.textContent = vm.oppAnnounce.draws === 0 ? `Discarded 4 — pat` : `Discarded ${vm.oppAnnounce.discards} — drawing ${vm.oppAnnounce.draws}`;
+      status.textContent = vm.oppAnnounce.draws === 0 ? `Discarded ${vm.oppAnnounce.discards} — pat` : `Discarded ${vm.oppAnnounce.discards} — drawing ${vm.oppAnnounce.draws}`;
       status.classList.add('announce');
     } else if (acting) {
       status.textContent = vm.mode === 'practice' ? (vm.botThinking || 'Thinking…') : 'Choosing a keep…';
@@ -367,8 +382,9 @@
         if (reveal.lastStage < 3) node.classList.add('card-reveal');
         box.appendChild(node);
       });
+      if (p.discarded && p.discarded.length) box.appendChild(discardGroup(p.discarded, reveal.lastStage < 3));
     } else {
-      const n = vm.oppAnnounce ? 5 : 9;
+      const n = vm.oppAnnounce ? 5 : vm.handSize;
       for (let i = 0; i < n; i++) box.appendChild(backEl());
     }
   }
@@ -406,8 +422,10 @@
     if (vm.keep) {
       // Already drawn: show the final five, new cards marked.
       [...vm.keep, ...vm.drawn].forEach((c) => box.appendChild(cardEl(c, { extra: 'static' + (vm.drawn.includes(c) ? ' drawn' : '') })));
+      box.appendChild(discardGroup(vm.hand.filter((c) => !vm.keep.includes(c))));
       box.classList.remove('selecting');
-      status.textContent = vm.drawn.length === 0 ? 'You discarded 4 — pat' : `You discarded ${G.discardCount(vm.keep.length)} — drew ${vm.drawn.length}`;
+      const nd = G.discardCount(vm.keep.length, vm.hand.length);
+      status.textContent = vm.drawn.length === 0 ? `You discarded ${nd} — pat` : `You discarded ${nd} — drew ${vm.drawn.length}`;
       status.classList.add('announce');
       el('keepHint').textContent = vm.results ? '' : (vm.acting === vm.oppSeat ? `Waiting for ${vm.oppName} to draw…` : '');
       hide('drawActions');
@@ -437,7 +455,7 @@
     if (k === 0) hint = 'Click the cards you want to keep (2–5). Everything else is discarded.';
     else if (k < G.MIN_KEEP) hint = `Keeping ${k} — keep at least 2.`;
     else if (k > G.MAX_KEEP) hint = `Keeping ${k} — you can keep at most 5.`;
-    else hint = `Keeping ${k} → discard ${G.HAND_SIZE - k}, ${k === 5 ? 'pat (draw nothing)' : 'draw ' + (5 - k)}.`;
+    else hint = `Keeping ${k} → discard ${vm.hand.length - k}, ${k === 5 ? 'pat (draw nothing)' : 'draw ' + (5 - k)}.`;
     if (!myTurn && vm.meSeat === 'ip' && !vm.oppAnnounce) {
       hint += ` ${vm.oppName} is out of position and announces first — you can line up your keep meanwhile.`;
     }
@@ -447,7 +465,7 @@
     el('keepHint').textContent = hint;
     btn.disabled = !(myTurn && legal);
     btn.textContent = !legal ? 'Select 2–5 cards to keep'
-      : k === 5 ? 'Pat — discard 4' : `Discard ${G.HAND_SIZE - k} · draw ${5 - k}`;
+      : k === 5 ? `Pat — discard ${vm.hand.length - 5}` : `Discard ${vm.hand.length - k} · draw ${5 - k}`;
     if (!myTurn && legal) btn.textContent = 'Waiting for your turn…';
     if (table.error) { el('gameError').textContent = table.error; show('gameError'); } else hide('gameError');
   }
@@ -577,13 +595,42 @@
   el('btnPracticeStart').addEventListener('click', () => {
     if (es) { es.close(); es = null; }
     mode = 'practice';
-    const preset = (document.querySelector('input[name="depth"]:checked') || {}).value || 'standard';
+    const preset = (document.querySelector('input[name="depth"]:checked') || {}).value || 'deep';
+    const handSize = Number(el('practiceHandSize').value) || 9;
+    savePracticePrefs({ preset, handSize, stake: Number(el('practiceStake').value) });
     practice = {
-      stake: Number(el('practiceStake').value), preset, handNumber: 0,
+      stake: Number(el('practiceStake').value), preset, handSize, handNumber: 0,
       cumulative: { me: 0, bot: 0 }, history: [], firstSeat: Math.random() < 0.5 ? 'oop' : 'ip', hand: null
     };
+    el('psHandSize').value = String(handSize);
+    el('psDepth').value = preset;
     showScreen('table');
     dealPractice();
+  });
+
+  // Practice preferences (hand size, solver depth, stake) persist between visits.
+  const PRACTICE_PREFS_KEY = 'drawmaha-duel-practice-prefs';
+  function savePracticePrefs(p) {
+    try { localStorage.setItem(PRACTICE_PREFS_KEY, JSON.stringify(p)); } catch (e) { /* ignore */ }
+  }
+  try {
+    const p = JSON.parse(localStorage.getItem(PRACTICE_PREFS_KEY) || 'null');
+    if (p) {
+      if ([7, 8, 9, 10].includes(p.handSize)) el('practiceHandSize').value = String(p.handSize);
+      const r = document.querySelector(`input[name="depth"][value="${p.preset}"]`);
+      if (r) r.checked = true;
+      if (STAKES.includes(p.stake)) el('practiceStake').value = String(p.stake);
+    }
+  } catch (e) { /* ignore */ }
+  el('psHandSize').addEventListener('change', () => {
+    if (!practice) return;
+    practice.handSize = Number(el('psHandSize').value);
+    savePracticePrefs({ preset: practice.preset, handSize: practice.handSize, stake: practice.stake });
+  });
+  el('psDepth').addEventListener('change', () => {
+    if (!practice) return;
+    practice.preset = el('psDepth').value;
+    savePracticePrefs({ preset: practice.preset, handSize: practice.handSize, stake: practice.stake });
   });
   el('btnPracticeBack').addEventListener('click', () => {
     window.SolverPool.cancel();
@@ -598,17 +645,18 @@
     practice.handNumber += 1;
     const deck = window.Poker.shuffle(window.Poker.freshDeck());
     const flopA = deck.splice(0, 3), flopB = deck.splice(0, 3);
-    const mine = deck.splice(0, 9), bots = deck.splice(0, 9);
+    const H = practice.handSize;
+    const mine = deck.splice(0, H), bots = deck.splice(0, H);
     const mySeat = practice.handNumber % 2 === 1 ? practice.firstSeat : other(practice.firstSeat);
     const h = practice.hand = {
       deck, flopA, flopB, my9: mine, bot9: bots, mySeat, botSeat: other(mySeat),
       myKeep: null, myDrawn: null, botKeep: null, botDrawn: null, acting: 'oop',
-      results: null, peek: false, studyTab: null,
+      results: null, peek: false, studyTab: null, preset: practice.preset,
       solve: { status: 'running', progress: 0, result: null, error: null, startedAt: performance.now() }
     };
     renderTable();
     window.SolverPool.solveFlop({
-      flopA, flopB, preset: practice.preset,
+      flopA, flopB, preset: practice.preset, handSize: H,
       observers: [{ id: 'me', seat: mySeat, cards: mine }, { id: 'bot', seat: h.botSeat, cards: bots }],
       onProgress: (p) => {
         if (practice && practice.hand === h) { h.solve.progress = p; updateProgress(); }
@@ -633,7 +681,7 @@
   function practiceVM() {
     if (!practice || !practice.hand) return null;
     const h = practice.hand;
-    const botAnnounce = h.botKeep ? { discards: G.discardCount(h.botKeep.length), draws: h.botDrawn.length } : null;
+    const botAnnounce = h.botKeep ? { discards: G.discardCount(h.botKeep.length, h.bot9.length), draws: h.botDrawn.length } : null;
     let botThinking = null;
     if (h.acting === h.botSeat && !h.botKeep) {
       botThinking = h.solve.status === 'running' ? `Solving the flop… ${Math.round(h.solve.progress * 100)}%` : 'Choosing…';
@@ -643,6 +691,7 @@
       mode: 'practice',
       handNumber: practice.handNumber,
       stake: practice.stake,
+      handSize: h.my9.length,
       meId: 'me', oppId: 'bot', meName: 'You', oppName: BOT_NAME, oppConnected: true,
       meSeat: h.mySeat, oppSeat: h.botSeat,
       hand: h.my9, keep: h.myKeep, drawn: h.myDrawn,
@@ -676,9 +725,10 @@
     if (!h || h.botKeep || h.acting !== h.botSeat) return;
     if (h.solve.status === 'running') { renderTable(); return; }
     let ki;
+    const NK = S.layout(h.bot9.length).NKEEPS;
     if (h.solve.status === 'done') {
       const o = h.solve.result.observers.find((x) => x.id === 'bot');
-      const freqs = h.botSeat === 'oop' ? o.freq : o.freq.slice(h.myDrawn.length * S.NKEEPS, (h.myDrawn.length + 1) * S.NKEEPS);
+      const freqs = h.botSeat === 'oop' ? o.freq : o.freq.slice(h.myDrawn.length * NK, (h.myDrawn.length + 1) * NK);
       ki = S.sampleMixed(freqs);
     } else {
       // Solver failed (shouldn't happen) — fall back to keeping the best 5 dealt cards.
@@ -698,7 +748,7 @@
     const h = practice.hand;
     const boardA = [...h.flopA, ...h.deck.splice(0, 2)];
     const boardB = [...h.flopB, ...h.deck.splice(0, 2)];
-    const seats = { me: { kept: h.myKeep, drawn: h.myDrawn, name: 'You' }, bot: { kept: h.botKeep, drawn: h.botDrawn, name: BOT_NAME } };
+    const seats = { me: { dealt: h.my9, kept: h.myKeep, drawn: h.myDrawn, name: 'You' }, bot: { dealt: h.bot9, kept: h.botKeep, drawn: h.botDrawn, name: BOT_NAME } };
     const oopId = h.mySeat === 'oop' ? 'me' : 'bot', ipId = oopId === 'me' ? 'bot' : 'me';
     const fin = (id) => [...seats[id].kept, ...seats[id].drawn];
     const res = G.scoreShowdown(oopId, fin(oopId), ipId, fin(ipId), boardA, boardB);
@@ -711,7 +761,8 @@
       handNumber: practice.handNumber, stake: practice.stake, boardA, boardB, oopId, ipId,
       players: [oopId, ipId].map((id) => ({
         id, name: seats[id].name, kept: seats[id].kept, drawn: seats[id].drawn, final: fin(id),
-        discards: G.discardCount(seats[id].kept.length), draws: seats[id].drawn.length
+        discarded: seats[id].dealt.filter((c) => !seats[id].kept.includes(c)),
+        discards: G.discardCount(seats[id].kept.length, seats[id].dealt.length), draws: seats[id].drawn.length
       })),
       evals: res.evals, contests: res.contests, scoop: res.scoop, units: res.units, dollars,
       cumulative: { ...practice.cumulative }
@@ -739,8 +790,9 @@
   }
 
   function keepIndexOf(cards9, keep) {
+    const NK = S.layout(cards9.length).NKEEPS;
     const set = new Set(keep);
-    for (let ki = 0; ki < S.NKEEPS; ki++) {
+    for (let ki = 0; ki < NK; ki++) {
       const kc = S.keepCards(cards9, ki);
       if (kc.length === keep.length && kc.every((c) => set.has(c))) return ki;
     }
@@ -771,7 +823,7 @@
       show('solveProgress');
       el('solveProgressBar').style.width = `${Math.round(sv.progress * 100)}%`;
       el('studyStatus').textContent = `Solving this flop… ${Math.round(sv.progress * 100)}%`;
-      body.innerHTML = `<p class="hint">The bot solves each flop pair for an approximate equilibrium (${S.PRESETS[practice.preset].N} sampled hands per seat, ${window.SolverPool.workerCount} worker thread${window.SolverPool.workerCount > 1 ? 's' : ''}) before it draws.${h.mySeat === 'oop' ? ' You act first, so go ahead — it will be ready by the time it needs it.' : ''}</p>`;
+      body.innerHTML = `<p class="hint">The bot solves each flop pair for an approximate equilibrium (${S.PRESETS[h.preset].N} sampled hands per seat, ${window.SolverPool.workerCount} worker thread${window.SolverPool.workerCount > 1 ? 's' : ''}) before it draws.${h.mySeat === 'oop' ? ' You act first, so go ahead — it will be ready by the time it needs it.' : ''}</p>`;
       return;
     }
     hide('solveProgress');
@@ -780,13 +832,14 @@
       body.innerHTML = `<p class="error">The solver failed on this hand: ${esc(sv.error)}</p>`;
       return;
     }
-    el('studyStatus').textContent = `Solved in ${sv.seconds.toFixed(1)} s · ${practice.preset} depth`;
+    el('studyStatus').textContent = `Solved in ${sv.seconds.toFixed(1)} s · ${h.preset} depth`;
     if (!visible) {
       body.innerHTML = `<p class="hint">Solved and hidden until the hand is over. ${decided ? '' : 'Click <strong>Peek at solver</strong> if you want the answer before you draw.'}</p>`;
       return;
     }
 
     const res = sv.result;
+    const NK = S.layout(h.my9.length).NKEEPS, KD = S.layout(h.my9.length).KEEP_DRAW;
     const meObs = res.observers.find((o) => o.id === 'me');
     const botObs = res.observers.find((o) => o.id === 'bot');
     const stake = practice.stake;
@@ -796,10 +849,10 @@
     const actualD = iAmIP && h.botKeep ? h.botDrawn.length : null;
     if (iAmIP && h.studyTab === null) h.studyTab = actualD !== null ? actualD : 0;
     const d = iAmIP ? h.studyTab : null;
-    const evOf = (ki) => (iAmIP ? meObs.ev[d * S.NKEEPS + ki] : meObs.ev[ki]);
-    const freqOf = (ki) => (iAmIP ? meObs.freq[d * S.NKEEPS + ki] : meObs.freq[ki]);
+    const evOf = (ki) => (iAmIP ? meObs.ev[d * NK + ki] : meObs.ev[ki]);
+    const freqOf = (ki) => (iAmIP ? meObs.freq[d * NK + ki] : meObs.freq[ki]);
 
-    const order = Array.from({ length: S.NKEEPS }, (_, i) => i).sort((a, b) => evOf(b) - evOf(a));
+    const order = Array.from({ length: NK }, (_, i) => i).sort((a, b) => evOf(b) - evOf(a));
     const bestKi = order[0];
     const myKi = decided ? keepIndexOf(h.my9, h.myKeep) : -1;
 
@@ -810,7 +863,7 @@
       const lost = evOf(bestKi) - evOf(myKi);
       const rank = order.indexOf(myKi) + 1;
       const inMix = freqOf(myKi) >= 0.05;
-      html += `<div class="verdict">Your keep (${DRAW_NAMES[S.KEEP_DRAW[myKi]].toLowerCase()}) has EV ${evText(evOf(myKi), stake)} per hand — #${rank} of ${S.NKEEPS}.
+      html += `<div class="verdict">Your keep (${DRAW_NAMES[KD[myKi]].toLowerCase()}) has EV ${evText(evOf(myKi), stake)} per hand — #${rank} of ${NK}.
         ${lost < 0.02 ? '<strong class="good">That’s the solver’s top choice (or within noise of it).</strong>'
           : `The best keep was worth ${evText(evOf(bestKi), stake)}: <strong class="bad">you gave up ${units(lost)} stakes (${money(lost * stake, { sign: false })})</strong>.`}
         ${inMix ? ` The equilibrium plays your keep ${(freqOf(myKi) * 100).toFixed(0)}% of the time.` : ''}</div>`;
@@ -829,13 +882,13 @@
     html += `<table class="ev-table"><tr><th>#</th><th>Keep</th><th>EV / hand</th><th>Draw</th><th>Solver mix</th></tr>`;
     rows.forEach((ki) => {
       const f = freqOf(ki);
-      html += `<tr class="${ki === myKi ? 'chosen' : ''}${ki === bestKi ? ' best' : ''}" data-ki="${ki}"><td>${order.indexOf(ki) + 1}${ki === myKi ? ' <span class="tag-mini">you</span>' : ''}</td><td class="keepcell"></td><td>${evText(evOf(ki), stake)}</td><td>${DRAW_NAMES[S.KEEP_DRAW[ki]]}</td><td>${f >= 0.005 ? `<span class="freq-bar" style="width:${Math.max(2, f * 70)}px"></span>${(f * 100).toFixed(0)}%` : '—'}</td></tr>`;
+      html += `<tr class="${ki === myKi ? 'chosen' : ''}${ki === bestKi ? ' best' : ''}" data-ki="${ki}"><td>${order.indexOf(ki) + 1}${ki === myKi ? ' <span class="tag-mini">you</span>' : ''}</td><td class="keepcell"></td><td>${evText(evOf(ki), stake)}</td><td>${DRAW_NAMES[KD[ki]]}</td><td>${f >= 0.005 ? `<span class="freq-bar" style="width:${Math.max(2, f * 70)}px"></span>${(f * 100).toFixed(0)}%` : '—'}</td></tr>`;
     });
     html += '</table>';
     // best per draw count
     html += `<p style="margin-top:10px"><strong>Best by draw count:</strong> ` + [0, 1, 2, 3].map((x) => {
       let b = -1;
-      for (let ki = 0; ki < S.NKEEPS; ki++) if (S.KEEP_DRAW[ki] === x && (b < 0 || evOf(ki) > evOf(b))) b = ki;
+      for (let ki = 0; ki < NK; ki++) if (KD[ki] === x && (b < 0 || evOf(ki) > evOf(b))) b = ki;
       return `${DRAW_NAMES[x]} ${evText(evOf(b), stake)}`;
     }).join(' · ') + '</p>';
     html += '</div>';
@@ -845,8 +898,8 @@
       html += `<div class="study-section"><h4>How your best keep reacts to the announcement</h4><table class="ev-table"><tr><th>If ${BOT_NAME}…</th><th>Best keep</th><th>EV / hand</th><th>Draw</th></tr>`;
       [0, 1, 2, 3].forEach((x) => {
         let b = 0;
-        for (let ki = 1; ki < S.NKEEPS; ki++) if (meObs.ev[x * S.NKEEPS + ki] > meObs.ev[x * S.NKEEPS + b]) b = ki;
-        html += `<tr data-ki="${b}" class="${x === actualD ? 'chosen' : ''}"><td>${x === 0 ? 'pats' : 'draws ' + x}${x === actualD ? ' <span class="tag-mini">actual</span>' : ''}${sum.oopDraw[x] < 0.02 ? ' <span class="tag-mini" title="Equilibrium OOP almost never announces this, so these numbers lean on a small trembling-hand sample">rare</span>' : ''}</td><td class="keepcell"></td><td>${evText(meObs.ev[x * S.NKEEPS + b], stake)}</td><td>${DRAW_NAMES[S.KEEP_DRAW[b]]}</td></tr>`;
+        for (let ki = 1; ki < NK; ki++) if (meObs.ev[x * NK + ki] > meObs.ev[x * NK + b]) b = ki;
+        html += `<tr data-ki="${b}" class="${x === actualD ? 'chosen' : ''}"><td>${x === 0 ? 'pats' : 'draws ' + x}${x === actualD ? ' <span class="tag-mini">actual</span>' : ''}${sum.oopDraw[x] < 0.02 ? ' <span class="tag-mini" title="Equilibrium OOP almost never announces this, so these numbers lean on a small trembling-hand sample">rare</span>' : ''}</td><td class="keepcell"></td><td>${evText(meObs.ev[x * NK + b], stake)}</td><td>${DRAW_NAMES[KD[b]]}</td></tr>`;
       });
       html += '</table></div>';
     }
@@ -871,16 +924,16 @@
     // --- the bot's play (only once its cards are visible) ---
     if (h.results && h.botKi !== undefined) {
       const bd = h.botSeat === 'ip' ? h.myDrawn.length : null;
-      const bf = (ki) => (bd === null ? botObs.freq[ki] : botObs.freq[bd * S.NKEEPS + ki]);
-      const be = (ki) => (bd === null ? botObs.ev[ki] : botObs.ev[bd * S.NKEEPS + ki]);
-      const mix = Array.from({ length: S.NKEEPS }, (_, i) => i).filter((ki) => bf(ki) >= 0.05).sort((a, b) => bf(b) - bf(a)).slice(0, 4);
-      html += `<div class="study-section"><h4>${BOT_NAME}'s draw</h4><p>${h.botSeat === 'ip' ? `After you ${h.myDrawn.length === 0 ? 'patted' : 'drew ' + h.myDrawn.length}, it` : 'Acting first, it'} was choosing between:</p>
+      const bf = (ki) => (bd === null ? botObs.freq[ki] : botObs.freq[bd * NK + ki]);
+      const be = (ki) => (bd === null ? botObs.ev[ki] : botObs.ev[bd * NK + ki]);
+      const mix = Array.from({ length: NK }, (_, i) => i).filter((ki) => bf(ki) >= 0.05).sort((a, b) => bf(b) - bf(a)).slice(0, 4);
+      html += `<div class="study-section"><h4>${BOT_NAME}'s draw</h4><div class="bot-dealt" id="botDealt"><span class="discard-label">Dealt</span></div><p>${h.botSeat === 'ip' ? `After you ${h.myDrawn.length === 0 ? 'patted' : 'drew ' + h.myDrawn.length}, it` : 'Acting first, it'} was choosing between:</p>
         <table class="ev-table"><tr><th>Keep</th><th>EV / hand</th><th>Draw</th><th>Mix</th></tr>
-        ${mix.map((ki) => `<tr data-bot-ki="${ki}" class="${ki === h.botKi ? 'chosen' : ''}"><td class="keepcell"></td><td>${evText(be(ki), stake)}</td><td>${DRAW_NAMES[S.KEEP_DRAW[ki]]}</td><td>${(bf(ki) * 100).toFixed(0)}%${ki === h.botKi ? ' <span class="tag-mini">played</span>' : ''}</td></tr>`).join('')}
+        ${mix.map((ki) => `<tr data-bot-ki="${ki}" class="${ki === h.botKi ? 'chosen' : ''}"><td class="keepcell"></td><td>${evText(be(ki), stake)}</td><td>${DRAW_NAMES[KD[ki]]}</td><td>${(bf(ki) * 100).toFixed(0)}%${ki === h.botKi ? ' <span class="tag-mini">played</span>' : ''}</td></tr>`).join('')}
         </table></div>`;
     }
 
-    html += `<p class="study-foot">How this works: the solver samples ${sum.N} hands for each seat on these two flops, scores every keep with Monte Carlo runouts, keeps the ${sum.K} best candidates per hand (spread across all four draw counts), and runs CFR+ on the resulting game — OOP picks a keep; IP sees only the draw count and picks its own. Your hand and the bot's are evaluated against that equilibrium with all ${S.NKEEPS} keeps, and neither one is visible to the other side. EVs are in stakes per hand (a contest = 1, a scoop = 6) and carry Monte Carlo noise of a few hundredths; treat near-ties as ties. The mix column is how often the solver's own regret minimiser played each keep — when it splits between options, they are usually within that noise of each other. Exploitability is measured inside the sampled game, so it understates the true gap to a full-game equilibrium.</p>`;
+    html += `<p class="study-foot">How this works: the solver samples ${sum.N} hands for each seat on these two flops, scores every keep with Monte Carlo runouts, keeps the ${sum.K} best candidates per hand (spread across all four draw counts), and runs CFR+ on the resulting game — OOP picks a keep; IP sees only the draw count and picks its own. Your hand and the bot's are evaluated against that equilibrium with all ${NK} keeps, and neither one is visible to the other side. EVs are in stakes per hand (a contest = 1, a scoop = 6) and carry Monte Carlo noise of a few hundredths; treat near-ties as ties. The mix column is how often the solver's own regret minimiser played each keep — when it splits between options, they are usually within that noise of each other. Exploitability is measured inside the sampled game, so it understates the true gap to a full-game equilibrium.</p>`;
 
     // Tables scroll sideways on narrow phones instead of crushing the card rows.
     html = html.replace(/<table class="ev-table">/g, '<div class="table-scroll"><table class="ev-table">').replace(/<\/table>/g, '</table></div>');
@@ -889,6 +942,8 @@
       const ki = Number(td.parentElement.dataset.ki);
       td.appendChild(miniCards(S.keepCards(h.my9, ki)));
     });
+    const dealtBox = body.querySelector('#botDealt');
+    if (dealtBox) dealtBox.appendChild(miniCards(h.bot9.filter((c) => h.botKeep.includes(c)).concat(h.bot9.filter((c) => !h.botKeep.includes(c))), { highlight: h.botKeep }));
     body.querySelectorAll('tr[data-bot-ki] .keepcell').forEach((td) => {
       td.appendChild(miniCards(S.keepCards(h.bot9, Number(td.parentElement.dataset.botKi))));
     });

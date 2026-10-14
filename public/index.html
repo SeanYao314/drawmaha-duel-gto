@@ -22,7 +22,7 @@
   <section id="screen-landing" class="screen">
     <div class="card-panel">
       <h1>Drawmaha Duel</h1>
-      <p class="subtitle">Heads-up. Nine cards, two flops, one draw. Your final five play as a 5-card hand <em>and</em> as a PLO5 hand on each board &mdash; three contests, and sweeping all three scoops for double.</p>
+      <p class="subtitle">Heads-up. Nine cards (or 7, 8, 10), two flops, one draw. Your final five play as a 5-card hand <em>and</em> as a PLO5 hand on each board &mdash; three contests, and sweeping all three scoops for double.</p>
 
       <div class="tabs">
         <button class="tab-btn active" data-tab="create">Create Room</button>
@@ -38,6 +38,14 @@
           <select id="createStake"></select>
         </label>
         <p class="hint" style="margin-top:-4px;">Each of the 3 contests pays this amount; a scoop pays double (6&times;).</p>
+        <label>Cards dealt
+          <select id="createHandSize">
+            <option value="7">7 cards &mdash; more draws, more variance</option>
+            <option value="8">8 cards</option>
+            <option value="9" selected>9 cards &mdash; standard</option>
+            <option value="10">10 cards &mdash; more made hands, more pats</option>
+          </select>
+        </label>
         <button id="btnCreate" class="primary">Create Room</button>
       </div>
 
@@ -61,12 +69,21 @@
         <label>Stake per contest
           <select id="practiceStake"></select>
         </label>
+        <label>Cards dealt
+          <select id="practiceHandSize">
+            <option value="7">7 cards &mdash; more draws, more variance</option>
+            <option value="8">8 cards</option>
+            <option value="9" selected>9 cards &mdash; standard</option>
+            <option value="10">10 cards &mdash; more made hands, more pats</option>
+          </select>
+        </label>
         <div class="variant-select">
           <label>Solver depth</label>
           <div class="variant-options" id="depthOptions">
-            <label class="radio-label"><input type="radio" name="depth" value="fast" /><span>Fast <span class="hint-inline">70 sampled hands per seat &mdash; ~1&ndash;2&nbsp;s per flop</span></span></label>
-            <label class="radio-label"><input type="radio" name="depth" value="standard" checked /><span>Standard <span class="hint-inline">110 hands per seat &mdash; a few seconds per flop</span></span></label>
-            <label class="radio-label"><input type="radio" name="depth" value="deep" /><span>Deep <span class="hint-inline">170 hands per seat, 16 candidate keeps each &mdash; slower, steadier numbers</span></span></label>
+            <label class="radio-label"><input type="radio" name="depth" value="fast" /><span>Fast <span class="hint-inline">70 sampled hands per seat &mdash; about a second</span></span></label>
+            <label class="radio-label"><input type="radio" name="depth" value="standard" /><span>Standard <span class="hint-inline">110 hands per seat &mdash; a couple of seconds</span></span></label>
+            <label class="radio-label"><input type="radio" name="depth" value="deep" checked /><span>Deep <span class="hint-inline">160 hands per seat, 16 candidate keeps each, more runouts &mdash; a few seconds</span></span></label>
+            <label class="radio-label"><input type="radio" name="depth" value="max" /><span>Max <span class="hint-inline">220 hands per seat, ~2&times; the runouts of Deep &mdash; steadiest numbers, roughly 10&nbsp;s per flop</span></span></label>
           </div>
         </div>
         <button id="btnPracticeStart" class="primary">Start Practice</button>
@@ -80,11 +97,12 @@
       <ul>
         <li>Heads-up. Each player is dealt <strong>9 cards</strong>, and two 3-card flops (<strong>Board A</strong> and <strong>Board B</strong>) are dealt face up.</li>
         <li>The player <strong>out of position</strong> acts first: keep 2&ndash;5 cards and discard the rest (4&ndash;7). Discard exactly 4 and you keep 5 and draw nothing &mdash; that's <strong>patting</strong>. Discard more and you draw back up to 5.</li>
+        <li><strong>7, 8 and 10-card variants:</strong> same game, different deal. You still keep 2&ndash;5 and draw back to 5, so with 7 cards you discard 2&ndash;5 and with 10 you discard 5&ndash;8. Fewer cards means fewer made hands &mdash; fewer pats, more drawing, more variance.</li>
         <li>How many cards OOP draws is <strong>announced</strong>. Only then does the player <strong>in position</strong> choose their own keep.</li>
         <li>Discards are dead. After both draws, each board gets a turn and a river.</li>
         <li>Your 5 cards are scored three ways, each worth one stake: as a plain <strong>5-card hand</strong>, and as a <strong>PLO5</strong> hand on each board (exactly 2 of your cards + exactly 3 board cards).</li>
         <li>Win all three outright and you <strong>scoop</strong>: double money (6 stakes instead of 3). An exact tie in a contest is a push &mdash; and means no scoop.</li>
-        <li>The button switches every hand.</li>
+        <li>The button switches every hand. At showdown both players' discards are shown too.</li>
       </ul>
     </details>
   </section>
@@ -110,13 +128,20 @@
   <section id="screen-table" class="screen hidden">
     <div class="card-panel wide">
       <div class="game-header">
-        <h2>Hand #<span id="handNumber"></span> <span id="modeTag" class="mode-tag hidden">PRACTICE vs BOT</span></h2>
+        <h2>Hand #<span id="handNumber"></span> <span id="modeTag" class="mode-tag hidden">PRACTICE vs BOT</span> <span id="sizeTag" class="mode-tag size-tag hidden"></span></h2>
         <div class="actions" style="width:auto;">
           <button id="btnPracticeBack" class="secondary hidden">Back to Menu</button>
         </div>
       </div>
 
       <div class="score-strip" id="scoreStrip"></div>
+
+      <div class="practice-settings hidden" id="practiceSettings">
+        <span class="ps-label">Next hand:</span>
+        <label>Cards <select id="psHandSize"><option value="7">7</option><option value="8">8</option><option value="9">9</option><option value="10">10</option></select></label>
+        <label>Solver <select id="psDepth"><option value="fast">Fast</option><option value="standard">Standard</option><option value="deep">Deep</option><option value="max">Max</option></select></label>
+        <span class="hint-inline" style="color:var(--muted)">Changes apply from the next deal.</span>
+      </div>
 
       <!-- opponent -->
       <div class="seat seat-opp" id="oppSeat">

@@ -6,7 +6,7 @@ importScripts('/lib/fasteval.js', '/lib/solver.js');
 self.onmessage = (e) => {
   const { id, kind, args } = e.data;
   try {
-    const ctx = args.flopA ? Solver.makeContext(args.flopA, args.flopB) : null;
+    const ctx = args.flopA ? Solver.makeContext(args.flopA, args.flopB, args.H || 9) : null;
     let result, transfer = [];
     if (kind === 'roundA') {
       result = Solver.prefilterRoundA(ctx, args.pop, args.oppPop, args.from, args.to, args.trials);
@@ -18,7 +18,7 @@ self.onmessage = (e) => {
       result = Solver.buildTensor(ctx, args.popO, args.candO, args.popI, args.candI, args.K, args.from, args.to, args.runs);
       transfer = [result.S.buffer, result.C.buffer];
     } else if (kind === 'observer') {
-      result = Solver.buildObserver(ctx, args.cards9, args.oppPop, args.oppCand, args.K, args.runs);
+      result = Solver.buildObserver(ctx, args.cards, args.oppPop, args.oppCand, args.K, args.runs);
       transfer = [result.S.buffer, result.C.buffer];
     } else if (kind === 'solve') {
       result = Solver.solve({

@@ -42,13 +42,13 @@
       w.busy = true;
       job.worker = w;
       pending.set(job.id, job);
-      w.postMessage({ id: job.id, kind: job.kind, args: job.args });
+      w.postMessage({ id: job.id, kind: job.kind, args: job.args }, job.transfer || []);
     }
   }
-  function run(kind, args, onProgress) {
+  function run(kind, args, onProgress, transfer) {
     ensureWorkers();
     return new Promise((resolve, reject) => {
-      queue.push({ id: nextJobId++, kind, args, resolve, reject, onProgress });
+      queue.push({ id: nextJobId++, kind, args, resolve, reject, onProgress, transfer });
       pump();
     });
   }
@@ -77,16 +77,17 @@
     return out;
   }
 
-  async function solveFlop({ flopA, flopB, observers = [], preset = 'standard', onProgress = () => {} }) {
+  async function solveFlop({ flopA, flopB, observers = [], handSize = 9, preset = 'standard', onProgress = () => {} }) {
     if (pending.size || queue.length) cancel();
     const gen = ++generation;
     const check = () => { if (gen !== generation) throw new Error('cancelled'); };
     const P = S.PRESETS[preset] || S.PRESETS.standard;
     const N = P.N, K = P.perDraw * 4;
     const fa = flopA.map(F.toInt), fb = flopB.map(F.toInt);
-    const ctx = S.makeContext(fa, fb);
+    const H = handSize;
+    const ctx = S.makeContext(fa, fb, H);
     const popO = S.samplePopulation(ctx, N), popI = S.samplePopulation(ctx, N);
-    const base = { flopA: fa, flopB: fb };
+    const base = { flopA: fa, flopB: fb, H };
 
     // Progress bookkeeping: each phase owns a slice of the bar.
     let done = 0;
@@ -117,16 +118,18 @@
     const tensorP = Promise.all(tSplits.map(([from, to]) => run('tensor', { ...base, popO, candO, popI, candI, K, from, to, runs: P.runs }).then((r) => { tick(); return r; })))
       .then((chunks) => ({ S: concat(Int16Array, chunks.map((c) => c.S)), C: concat(Uint8Array, chunks.map((c) => c.C)) }));
     const obsP = Promise.all(observers.map((o) => {
-      const cards9 = o.cards.map(F.toInt);
+      const cards = o.cards.map(F.toInt);
       const oppPop = o.seat === 'oop' ? popI : popO, oppCand = o.seat === 'oop' ? candI : candO;
-      return run('observer', { ...base, cards9, oppPop, oppCand, K, runs: P.obsRuns }).then((r) => { tick(); return { id: o.id, seat: o.seat, S: r.S, C: r.C }; });
+      return run('observer', { ...base, cards, oppPop, oppCand, K, runs: P.obsRuns }).then((r) => { tick(); return { id: o.id, seat: o.seat, S: r.S, C: r.C }; });
     }));
     const [tensor, obs] = await Promise.all([tensorP, obsP]);
     check();
 
     // CFR+ on one worker.
     const before = done;
-    const result = await run('solve', { N, K, candO, candI, tensor, observers: obs, iterations: P.iterations }, (p) => onProgress(Math.min(0.99, before + 0.2 * p)));
+    // Hand the big arrays over to the solve worker instead of copying them.
+    const transfer = [tensor.S.buffer, tensor.C.buffer, ...obs.flatMap((o) => [o.S.buffer, o.C.buffer])];
+    const result = await run('solve', { N, K, H, candO, candI, tensor, observers: obs, iterations: P.iterations }, (p) => onProgress(Math.min(0.99, before + 0.2 * p)), transfer);
     check();
     onProgress(1);
     return { ...result, preset };

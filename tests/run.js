@@ -65,8 +65,8 @@ test('keep validation: 2–5 cards from your own hand', () => {
   assert.strictEqual(G.validateKeep(hand, cards('As Ks Qs Js Ts')), null);
 });
 test('draw and discard counts', () => {
-  assert.deepStrictEqual([5, 4, 3, 2].map(G.drawCount), [0, 1, 2, 3]);
-  assert.deepStrictEqual([5, 4, 3, 2].map(G.discardCount), [4, 5, 6, 7]);
+  assert.deepStrictEqual([5, 4, 3, 2].map((k) => G.drawCount(k)), [0, 1, 2, 3]);
+  assert.deepStrictEqual([5, 4, 3, 2].map((k) => G.discardCount(k)), [4, 5, 6, 7]);
 });
 test('dealing: 9 + 9 + two 3-card flops, all distinct, 28 left for draws and turns/rivers', () => {
   const { deck, flopA, flopB, hands } = G.dealHand(['a', 'b']);
@@ -101,7 +101,39 @@ test('scoring: a pushed contest blocks the scoop', () => {
   assert.ok(Math.abs(r.units.x) <= 2);
 });
 
+test('7, 8 and 10-card deals: keep 2–5, discard counts follow the hand size', () => {
+  for (const H of [7, 8, 10]) {
+    const { deck, hands } = G.dealHand(['a', 'b'], H);
+    assert.strictEqual(hands.a.length, H);
+    assert.strictEqual(deck.length, 52 - 6 - 2 * H);
+    assert.strictEqual(G.validateKeep(hands.a, hands.a.slice(0, 5)), null);
+    assert.ok(G.validateKeep(hands.a, hands.a.slice(0, 6)));
+    assert.strictEqual(G.discardCount(5, H), H - 5);
+    assert.strictEqual(G.discardCount(2, H), H - 2);
+  }
+});
+
 console.log('Solver');
+test('keep counts per hand size: 112 / 210 / 372 / 627', () => {
+  assert.deepStrictEqual([7, 8, 9, 10].map((h) => S.layout(h).NKEEPS), [112, 210, 372, 627]);
+});
+test('a 7-card and a 10-card solve both run and return valid strategies', () => {
+  for (const H of [7, 10]) {
+    const d = P.shuffle(P.freshDeck());
+    const res = S.runAll({
+      flopA: d.slice(0, 3), flopB: d.slice(3, 6),
+      observers: [{ id: 'me', seat: 'ip', cards: d.slice(6, 6 + H) }],
+      overrides: { N: 20, trialsA: 3, trialsB: 4, runs: 1, obsRuns: 2, iterations: 30 }
+    });
+    const o = res.observers[0];
+    assert.strictEqual(o.ev.length, 4 * S.layout(H).NKEEPS);
+    for (let dd = 0; dd < 4; dd++) {
+      const f = o.freq.slice(dd * S.layout(H).NKEEPS, (dd + 1) * S.layout(H).NKEEPS).reduce((x, y) => x + y, 0);
+      assert.ok(Math.abs(f - 1) < 1e-6);
+    }
+    assert.strictEqual(S.keepCards(d.slice(6, 6 + H), 0).length, 5);
+  }
+});
 test('372 keep options: 126 pat, 126 draw-1, 84 draw-2, 36 draw-3', () => {
   const counts = [0, 0, 0, 0];
   for (let i = 0; i < S.NKEEPS; i++) counts[S.KEEP_DRAW[i]]++;

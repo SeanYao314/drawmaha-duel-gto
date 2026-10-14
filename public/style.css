@@ -305,6 +305,10 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   padding: 2px 8px; border-radius: 999px; margin-left: 8px; vertical-align: middle;
 }
 
+.size-tag { background: #ffe9c2; color: #6b4300; }
+.practice-settings { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; background: #f6f7f9; border-radius: 10px; padding: 8px 12px; margin-bottom: 14px; font-size: .85rem; font-weight: 700; }
+.practice-settings select { margin-left: 4px; padding: 4px 6px; border-radius: 8px; border: 1px solid #d9dce1; font-weight: 600; }
+.ps-label { color: var(--muted); }
 .score-strip { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
 .score-pill {
   background: #f6f7f9; border-radius: 999px; padding: 6px 14px; font-weight: 700; font-size: .9rem;
@@ -356,6 +360,11 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .playing-card.static { cursor: default; }
 .playing-card.static:hover { transform: none; }
 .keep-hint { margin: 8px 0 10px; font-weight: 600; }
+.discard-group { display: flex; flex-direction: column; gap: 4px; margin-left: 14px; padding-left: 14px; border-left: 2px dashed #e1e4e8; }
+.discard-label { font-size: .66rem; font-weight: 800; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.discard-cards { display: flex; gap: 4px; flex-wrap: wrap; }
+.discard-cards .playing-card { opacity: .55; filter: grayscale(.35); }
+@media (max-width: 640px) { .discard-group { margin-left: 0; padding-left: 0; border-left: none; width: 100%; } }
 
 .boards-row { display: flex; gap: 24px; flex-wrap: wrap; margin: 6px 0 16px; }
 .board-block { flex: 1; min-width: 260px; }
@@ -424,6 +433,10 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .stat { background: #fff; border: 1px solid #ebe6fb; border-radius: 10px; padding: 8px 10px; }
 .stat .k { font-size: .7rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
 .stat .v { font-size: 1.05rem; font-weight: 800; margin-top: 2px; }
+.bot-dealt { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.bot-dealt .mini { display: flex; gap: 3px; }
+.bot-dealt .playing-card.small { width: 32px; height: 46px; font-size: .82rem; }
+.bot-dealt .playing-card:not(.used-in-best) { opacity: .5; }
 .study-foot { font-size: .75rem; color: var(--muted); margin-top: 12px; line-height: 1.45; }
 
 .reveal-status {

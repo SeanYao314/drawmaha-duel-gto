@@ -19,6 +19,20 @@ Like its sibling project (Taiwanese Poker), it has **no dependencies**. It runs 
 - **Scoop.** Winning all three contests outright pays double: 6 stakes instead of 3.
 - **Ties push.** An exact tie in a contest moves no money for that contest, and it means nobody can scoop.
 - **The button switches every hand.**
+- **Discards are shown at showdown.** You see your opponent's discards, and they see yours.
+
+### 7, 8 and 10-card variants
+
+The game also runs with 7, 8 or 10 cards dealt. You pick the hand size when you create a room or start practice, and in practice you can change it between hands. The rest of the game is unchanged: you still keep 2–5 cards and draw back up to 5.
+
+| Cards dealt | Discard range | Pat means discarding | Ways to keep |
+|---|---|---|---|
+| 7 | 2–5 | 2 | 112 |
+| 8 | 3–6 | 3 | 210 |
+| 9 (standard) | 4–7 | 4 | 372 |
+| 10 | 5–8 | 5 | 627 |
+
+Fewer dealt cards means fewer made hands, so players pat less, draw more, and the swings get bigger. For example, on sample flops the solver's out-of-position player patted about 60% of the time with 9 cards and about 30–40% with 7.
 
 If you play at $100 per contest, each contest is worth $100 and a scoop is worth $600. The stake is picked when a room is created.
 
@@ -37,7 +51,7 @@ Open the page in two browser windows, or send the room link to a friend, to play
 
 ## Live rooms
 
-1. One player creates a room and picks the stake. They get a 4-character code and a share link.
+1. One player creates a room and picks the stake and the number of cards dealt (7–10). They get a 4-character code and a share link.
 2. The opponent joins with the code. Rooms are heads-up only.
 3. The host starts the game. The first button is random, and it alternates after that.
 4. Each player sees their 9 cards and both flops, then clicks the cards to keep (2–5).
@@ -54,15 +68,20 @@ The **Practice vs Bot** tab runs entirely in your browser. There's no room and n
 
 Before the bot draws, it solves the current flop pair (details below). The solve runs in Web Workers spread across your CPU cores, so the page stays responsive.
 
-- **Fast:** about a second.
-- **Standard:** a couple of seconds on a modern laptop.
-- **Deep:** slower, with steadier numbers.
+| Depth | Hands per seat | Candidate keeps per hand | Runouts per pairing (population / your hand) | Typical time on an 8-core laptop |
+|---|---|---|---|---|
+| Fast | 70 | 12 | 2 / 10 | about 1 s |
+| Standard | 110 | 12 | 3 / 14 | a couple of seconds |
+| **Deep** (default) | 160 | 16 | 3 / 20 | a few seconds |
+| Max | 220 | 16 | 4 / 28 | about 10 s (more with 10 cards) |
+
+The 10-card game is the slowest, because each hand has 627 ways to keep. The study panel shows the actual time for each solve. Your last practice settings are remembered.
 
 If you're out of position, you act while it solves.
 
 The **Solver study** panel stays hidden until the hand is over, unless you click **Peek at solver**. It shows:
 
-- **Verdict.** Your keep's EV in stakes and dollars per hand, its rank out of all 372 possible keeps, and how much EV you gave up compared with the best keep.
+- **Verdict.** Your keep's EV in stakes and dollars per hand, its rank among all possible keeps (372 with 9 cards), and how much EV you gave up compared with the best keep.
 - **Your keep options.** The top keeps for your hand, with EV and how often the solver plays each one, plus the best keep for each draw count.
   - When you're IP, there's a tab for each possible announcement ("bot pats", "bot draws 1", and so on), with the real one marked.
   - A second table shows how your best keep changes with the announcement.
@@ -71,14 +90,14 @@ The **Solver study** panel stays hidden until the hand is over, unless you click
   - How often OOP announces each draw count, across every hand it could hold here.
   - How IP responds to each announcement, and how much each announcement is worth to IP.
   - An exploitability estimate.
-- **The bot's draw.** Once the cards are shown, which keeps the bot was mixing between and which one it played.
+- **The bot's draw.** Once the cards are shown: its full dealt hand (kept cards highlighted, discards faded), which keeps it was mixing between, and which one it played. Its discards also appear next to its final hand on the table.
 
 ### How the solver works (lib/solver.js)
 
-There's no betting, so all of the strategy is in the two keep decisions and in what OOP's draw count gives away. Once the flops are out, the rest of the hand is a small two-player game with hidden information. The exact game is far too big to solve: about 1.2 billion hands per player, and 372 ways to keep from each. So each flop pair is solved as a **sampled abstraction**:
+There's no betting, so all of the strategy is in the two keep decisions and in what OOP's draw count gives away. Once the flops are out, the rest of the hand is a small two-player game with hidden information. The exact game is far too big to solve: with 9 cards, about 1.2 billion hands per player and 372 ways to keep from each. So each flop pair is solved as a **sampled abstraction**:
 
-1. **Population.** Sample N random 9-card hands for each seat (70 / 110 / 170 for Fast / Standard / Deep). Neither player's real hand is in the population, so the solved strategies use only public information.
-2. **Candidate keeps.** Score all 372 keeps for every population hand with Monte Carlo runouts, in two rounds:
+1. **Population.** Sample N random hands for each seat (70 / 110 / 160 / 220 for Fast / Standard / Deep / Max). Neither player's real hand is in the population, so the solved strategies use only public information.
+2. **Candidate keeps.** Score every keep (372 with 9 cards) for every population hand with Monte Carlo runouts, in two rounds:
    - Round A: against a crude field.
    - Round B: against the field's round-A choices.
 
@@ -89,11 +108,11 @@ There's no betting, so all of the strategy is in the two keep decisions and in w
    - IP's information set is its hand plus the announced draw count.
    - A small "tremble" keeps rarely-used announcements reachable, so IP still learns sensible replies to them.
    - Exploitability inside the sampled game is about 0.001 stakes after 200 iterations.
-5. **Observers.** Your real hand and the bot's are evaluated against the population with all 372 keeps and more scenarios. They run their own regret minimisers alongside the population but never feed back into it. That's why the bot never sees your hand, and the study panel never sees the bot's.
+5. **Observers.** Your real hand and the bot's are evaluated against the population with every possible keep and more scenarios. They run their own regret minimisers alongside the population but never feed back into it. That's why the bot never sees your hand, and the study panel never sees the bot's.
    - The bot draws by sampling its own mix, ignoring weights under 5%.
    - When you're IP, the bot's announcement is read from its real draw count.
 
-Speed comes from `lib/fasteval.js`, a table-driven 5-card evaluator (about 25–40 ns per hand, ~57 KB of tables). It also uses a "pair table" trick: a PLO5 hand's value is the best of its 10 two-card pairs on the board, so once every pair is scored, all 372 keeps can be valued from array reads.
+Speed comes from `lib/fasteval.js`, a table-driven 5-card evaluator (about 25–40 ns per hand, ~57 KB of tables). It also uses a "pair table" trick: a PLO5 hand's value is the best of its 10 two-card pairs on the board, so once every pair is scored, every keep can be valued from array reads.
 
 **Known limits.** Treat the output as a strong study aid, not an exact solution.
 - The solver ignores the blocking effect of the *opponent's discards*. Only the cards each side keeps are forced apart.
