@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Drawmaha Duel</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">🂡 Drawmaha Duel</div>
+  <div class="topbar-right">
+    <button id="btnSoundToggle" class="sound-toggle" title="Toggle win sounds" aria-label="Toggle win sounds">🔊</button>
+    <div id="roomBadge" class="room-badge hidden">Room <span id="roomCodeLabel"></span></div>
+  </div>
+</header>
+
+<main id="app">
+
+  <!-- LANDING -->
+  <section id="screen-landing" class="screen">
+    <div class="card-panel">
+      <h1>Drawmaha Duel</h1>
+      <p class="subtitle">Heads-up. Nine cards, two flops, one draw. Your final five play as a 5-card hand <em>and</em> as a PLO5 hand on each board &mdash; three contests, and sweeping all three scoops for double.</p>
+
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="create">Create Room</button>
+        <button class="tab-btn" data-tab="join">Join Room</button>
+        <button class="tab-btn" data-tab="practice">Practice vs Bot</button>
+      </div>
+
+      <div id="tab-create" class="tab-content">
+        <label>Your name
+          <input id="createName" type="text" maxlength="20" placeholder="e.g. Bob" />
+        </label>
+        <label>Stake per contest
+          <select id="createStake"></select>
+        </label>
+        <p class="hint" style="margin-top:-4px;">Each of the 3 contests pays this amount; a scoop pays double (6&times;).</p>
+        <button id="btnCreate" class="primary">Create Room</button>
+      </div>
+
+      <div id="tab-join" class="tab-content hidden">
+        <label>Your name
+          <input id="joinName" type="text" maxlength="20" placeholder="e.g. Alice" />
+        </label>
+        <label>Room code
+          <input id="joinCode" type="text" maxlength="4" placeholder="e.g. K7Q2" style="text-transform:uppercase" />
+        </label>
+        <button id="btnJoin" class="primary">Join Room</button>
+      </div>
+
+      <div id="tab-practice" class="tab-content hidden">
+        <p class="hint" style="margin-top:0;">
+          Play heads-up against a bot that solves every flop for an approximate equilibrium
+          before it draws. Afterwards (or mid-hand, if you peek) the study panel shows the
+          EV of every keep for your hand, the equilibrium mix, and how the in-position
+          player should react to each draw count.
+        </p>
+        <label>Stake per contest
+          <select id="practiceStake"></select>
+        </label>
+        <div class="variant-select">
+          <label>Solver depth</label>
+          <div class="variant-options" id="depthOptions">
+            <label class="radio-label"><input type="radio" name="depth" value="fast" /><span>Fast <span class="hint-inline">70 sampled hands per seat &mdash; ~1&ndash;2&nbsp;s per flop</span></span></label>
+            <label class="radio-label"><input type="radio" name="depth" value="standard" checked /><span>Standard <span class="hint-inline">110 hands per seat &mdash; a few seconds per flop</span></span></label>
+            <label class="radio-label"><input type="radio" name="depth" value="deep" /><span>Deep <span class="hint-inline">170 hands per seat, 16 candidate keeps each &mdash; slower, steadier numbers</span></span></label>
+          </div>
+        </div>
+        <button id="btnPracticeStart" class="primary">Start Practice</button>
+      </div>
+
+      <p id="landingError" class="error hidden"></p>
+    </div>
+
+    <details class="rules-box">
+      <summary>How Drawmaha Duel works</summary>
+      <ul>
+        <li>Heads-up. Each player is dealt <strong>9 cards</strong>, and two 3-card flops (<strong>Board A</strong> and <strong>Board B</strong>) are dealt face up.</li>
+        <li>The player <strong>out of position</strong> acts first: keep 2&ndash;5 cards and discard the rest (4&ndash;7). Discard exactly 4 and you keep 5 and draw nothing &mdash; that's <strong>patting</strong>. Discard more and you draw back up to 5.</li>
+        <li>How many cards OOP draws is <strong>announced</strong>. Only then does the player <strong>in position</strong> choose their own keep.</li>
+        <li>Discards are dead. After both draws, each board gets a turn and a river.</li>
+        <li>Your 5 cards are scored three ways, each worth one stake: as a plain <strong>5-card hand</strong>, and as a <strong>PLO5</strong> hand on each board (exactly 2 of your cards + exactly 3 board cards).</li>
+        <li>Win all three outright and you <strong>scoop</strong>: double money (6 stakes instead of 3). An exact tie in a contest is a push &mdash; and means no scoop.</li>
+        <li>The button switches every hand.</li>
+      </ul>
+    </details>
+  </section>
+
+  <!-- LOBBY -->
+  <section id="screen-lobby" class="screen hidden">
+    <div class="card-panel">
+      <h2>Room <span id="lobbyCode"></span></h2>
+      <p class="subtitle">Send this link to your opponent.</p>
+      <div class="share-row">
+        <input id="shareLink" type="text" readonly />
+        <button id="btnCopyLink">Copy Link</button>
+      </div>
+      <p class="info-badge" id="lobbyStake"></p>
+      <h3>Players (<span id="lobbyCount"></span>/2)</h3>
+      <ul id="lobbyPlayers" class="player-list"></ul>
+      <button id="btnStart" class="primary hidden">Start Game</button>
+      <p id="lobbyHint" class="hint"></p>
+    </div>
+  </section>
+
+  <!-- TABLE (live game and practice share this screen) -->
+  <section id="screen-table" class="screen hidden">
+    <div class="card-panel wide">
+      <div class="game-header">
+        <h2>Hand #<span id="handNumber"></span> <span id="modeTag" class="mode-tag hidden">PRACTICE vs BOT</span></h2>
+        <div class="actions" style="width:auto;">
+          <button id="btnPracticeBack" class="secondary hidden">Back to Menu</button>
+        </div>
+      </div>
+
+      <div class="score-strip" id="scoreStrip"></div>
+
+      <!-- opponent -->
+      <div class="seat seat-opp" id="oppSeat">
+        <div class="seat-head">
+          <span class="seat-name" id="oppName"></span>
+          <span class="pos-chip" id="oppPos"></span>
+          <span class="seat-status" id="oppStatus"></span>
+        </div>
+        <div class="seat-cards" id="oppCards"></div>
+      </div>
+
+      <!-- boards -->
+      <div class="boards-row" id="boardsRow">
+        <div class="board-block">
+          <h4>Board A</h4>
+          <div class="board-cards" id="boardA"></div>
+        </div>
+        <div class="board-block">
+          <h4>Board B</h4>
+          <div class="board-cards" id="boardB"></div>
+        </div>
+      </div>
+
+      <!-- me -->
+      <div class="seat seat-me" id="meSeat">
+        <div class="seat-head">
+          <span class="seat-name" id="meName"></span>
+          <span class="pos-chip" id="mePos"></span>
+          <span class="seat-status" id="meStatus"></span>
+          <span class="sort-control" id="sortControl">
+            <span class="sort-label">Sort:</span>
+            <button type="button" class="sort-btn" data-sort="dealt">Dealt</button>
+            <button type="button" class="sort-btn" data-sort="rank">Rank</button>
+            <button type="button" class="sort-btn" data-sort="suit">Suit</button>
+          </span>
+        </div>
+        <div class="seat-cards" id="meCards"></div>
+        <p class="hint keep-hint" id="keepHint"></p>
+        <div class="actions" id="drawActions">
+          <button id="btnClearKeep" class="secondary">Clear</button>
+          <button id="btnAdvice" class="secondary hidden">Peek at solver</button>
+          <button id="btnDraw" class="primary" disabled>Select 2&ndash;5 cards to keep</button>
+        </div>
+        <p id="gameError" class="error hidden"></p>
+      </div>
+
+      <!-- results -->
+      <div id="resultsBlock" class="results-block hidden">
+        <p id="revealStatus" class="reveal-status hidden"></p>
+        <div id="scoopBanner" class="scoop-banner hidden"></div>
+        <table class="contest-table" id="contestTable"></table>
+        <div class="hand-total" id="handTotal"></div>
+        <div class="actions">
+          <button id="btnSkipReveal" class="secondary hidden">Skip ▶</button>
+          <button id="btnNextHand" class="primary hidden">Deal Next Hand</button>
+        </div>
+      </div>
+
+      <!-- solver study panel (practice) -->
+      <div id="studyPanel" class="study-panel hidden">
+        <div class="study-head">
+          <h3>🧠 Solver study</h3>
+          <span id="studyStatus" class="study-status"></span>
+        </div>
+        <div class="progress hidden" id="solveProgress"><div class="progress-bar" id="solveProgressBar"></div></div>
+        <div id="studyBody"></div>
+      </div>
+
+      <details class="rules-box" id="historyBox">
+        <summary>Hand history</summary>
+        <div id="historyList"></div>
+      </details>
+    </div>
+  </section>
+
+</main>
+
+<script src="/lib/poker.js"></script>
+<script src="/lib/game.js"></script>
+<script src="/lib/fasteval.js"></script>
+<script src="/lib/solver.js"></script>
+<script src="solver-pool.js"></script>
+<script src="client.js"></script>
+</body>
+</html>

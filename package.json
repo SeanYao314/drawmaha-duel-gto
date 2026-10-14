@@ -1,0 +1,14 @@
+{
+  "name": "drawmaha-duel",
+  "version": "1.0.0",
+  "description": "Heads-up 9-card draw poker with two flops: your final 5 play as a 5-card hand and as PLO5 on both boards. Live rooms plus a practice bot backed by an approximate-equilibrium solver.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node tests/run.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {}
+}
