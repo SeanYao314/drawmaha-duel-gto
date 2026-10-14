@@ -90,6 +90,15 @@ The **Solver study** panel stays hidden until the hand is over, unless you click
   - "Avg gain from deviating": how much a sampled hand could still gain by switching strategy. Near zero means the solve has settled.
 - **The bot's draw.** Once the cards are shown: its full dealt hand (kept cards highlighted, discards faded), which keeps it was choosing between, and which one it played. Its discards also appear next to its final hand on the table.
 
+### Position and draw feedback
+
+- **Position banner.** A color-coded banner above the table says where you sit this hand. Gold with a **D** button means you're in position: the opponent draws first and you decide after hearing the count. Blue means you're out of position and act first. Your seat is outlined in the same color, the button holder's chip shows the D, and the banner pulses whenever a new hand is dealt. This works in live games too.
+- **GTO grade (practice).** As soon as your draw and the bot's solve are both in, your keep is graded against the solver's best keep (given the bot's real announcement when you're in position). The grade appears as a pop-up, a badge on your seat and a sound:
+  - **✓ GTO!** if you found the best draw or one statistically tied with it. It plays a bright chime that climbs in pitch as your streak grows, and the pop-up shows "🔥 N in a row".
+  - **Good** if it's within 0.10 stakes, **Inaccuracy** within 0.30, **Mistake** within 0.75, and **Blunder** beyond that. Mistakes and blunders play a low "thud".
+
+  The Session panel tallies your GTO draws, your best and current streak, and each hand's grade. The 🔊 button mutes the sounds.
+
 ### Session graph
 
 Below the table, practice mode keeps a running **Session** panel. It has four totals, a line chart by hand (hover for the values after any hand), and a hand-by-hand table:

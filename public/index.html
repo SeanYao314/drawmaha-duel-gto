@@ -144,6 +144,9 @@
         <span class="hint-inline" style="color:var(--muted)">Changes apply from the next deal.</span>
       </div>
 
+      <div class="pos-banner" id="posBanner"></div>
+      <div class="grade-toast" id="gradeToast" role="status" aria-live="polite"></div>
+
       <!-- opponent -->
       <div class="seat seat-opp" id="oppSeat">
         <div class="seat-head">
@@ -172,6 +175,7 @@
           <span class="seat-name" id="meName"></span>
           <span class="pos-chip" id="mePos"></span>
           <span class="seat-status" id="meStatus"></span>
+          <span class="grade-badge hidden" id="gradeBadge"></span>
           <span class="sort-control" id="sortControl">
             <span class="sort-label">Sort:</span>
             <button type="button" class="sort-btn" data-sort="dealt">Dealt</button>

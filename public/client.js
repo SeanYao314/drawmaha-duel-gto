@@ -337,6 +337,7 @@
     const stage = vm.results ? (reveal.key === vm.key ? reveal.stage : FINAL_STAGE) : 0;
 
     renderScoreStrip(vm);
+    renderPositionBanner(vm);
     renderOpp(vm, stage);
     renderBoards(vm, stage);
     renderMe(vm);
@@ -355,8 +356,26 @@
 
   function posChip(id, seat, acting) {
     const c = el(id);
-    c.textContent = seat === 'ip' ? 'Button · in position' : 'Out of position';
+    c.innerHTML = seat === 'ip' ? '<span class="dealer-btn" title="Dealer button">D</span> In position' : 'Out of position · acts first';
     c.className = 'pos-chip ' + seat + (acting ? ' acting' : '');
+  }
+
+  // Big, color-coded reminder of where you sit this hand (gold = in position / button,
+  // blue = out of position). It pulses once whenever a new hand is dealt.
+  let lastBannerKey = null;
+  function renderPositionBanner(vm) {
+    const b = el('posBanner');
+    const ip = vm.meSeat === 'ip';
+    b.className = 'pos-banner ' + (ip ? 'ip' : 'oop');
+    b.innerHTML = ip
+      ? `<span class="pb-icon"><span class="dealer-btn big">D</span></span><span><strong>You're IN POSITION</strong> — you have the button. ${esc(vm.oppName)} draws first and announces how many; then you decide.</span>`
+      : `<span class="pb-icon">⬆</span><span><strong>You're OUT OF POSITION</strong> — you act first. Your draw count is announced before ${esc(vm.oppName)} decides.</span>`;
+    if (vm.key !== lastBannerKey) {
+      lastBannerKey = vm.key;
+      b.classList.remove('flash'); void b.offsetWidth; b.classList.add('flash');
+    }
+    el('meSeat').classList.toggle('seat-ip', ip);
+    el('meSeat').classList.toggle('seat-oop', !ip);
   }
 
   function renderOpp(vm, stage) {
@@ -426,11 +445,16 @@
       const nd = G.discardCount(vm.keep.length, vm.hand.length);
       status.textContent = vm.drawn.length === 0 ? `You discarded ${nd} — pat` : `You discarded ${nd} — drew ${vm.drawn.length}`;
       status.classList.add('announce');
+      const gb = el('gradeBadge');
+      if (vm.grade) { gb.className = `grade-badge g-${vm.grade.key}`; gb.textContent = (vm.grade.key === 'gto' ? '✓ ' : '') + vm.grade.label; }
+      else if (vm.mode === 'practice') { gb.className = 'grade-badge g-pending'; gb.textContent = 'Grading…'; }
+      else gb.className = 'grade-badge hidden';
       el('keepHint').textContent = vm.results ? '' : (vm.acting === vm.oppSeat ? `Waiting for ${vm.oppName} to draw…` : '');
       hide('drawActions');
       return;
     }
 
+    el('gradeBadge').className = 'grade-badge hidden';
     show('drawActions');
     // All cards start fully visible; clicking a card marks it for discard (click again
     // to keep it). Whatever isn't marked is your keep.
@@ -667,6 +691,7 @@
       h.solve.status = 'done';
       h.solve.result = result;
       h.solve.seconds = (performance.now() - h.solve.startedAt) / 1000;
+      gradeMyDraw(h);
       maybeBotAct();
       renderTable();
     }).catch((err) => {
@@ -700,6 +725,7 @@
       acting: h.acting,
       flopA: h.flopA, flopB: h.flopB,
       results: h.results,
+      grade: h.grade || null,
       botThinking,
       cumulative: { me: practice.cumulative.me, opp: practice.cumulative.bot },
       history: practice.history
@@ -711,12 +737,80 @@
     if (h.myKeep || h.acting !== h.mySeat) return;
     h.myKeep = keep;
     h.myDrawn = h.deck.splice(0, G.drawCount(keep.length));
+    gradeMyDraw(h);
     if (h.mySeat === 'oop') {
       h.acting = 'ip';
       renderTable();
       maybeBotAct();
     } else {
       finishPractice();
+    }
+  }
+
+  // ---------- instant GTO feedback on your draw ----------
+  // As soon as both your keep and the solve exist, grade the keep against the best one
+  // (same comparison as the study panel: EV vs the equilibrium range, given the bot's
+  // announcement when you're in position). Ties within the error bar count as GTO.
+  const GRADES = [
+    { key: 'gto', label: 'GTO!', note: 'the solver’s play', max: 0, sound: 'gto' },
+    { key: 'good', label: 'Good', note: 'close to the best', max: 0.10, sound: 'good' },
+    { key: 'inacc', label: 'Inaccuracy', note: '', max: 0.30, sound: 'meh' },
+    { key: 'mistake', label: 'Mistake', note: '', max: 0.75, sound: 'bad' },
+    { key: 'blunder', label: 'Blunder', note: '', max: Infinity, sound: 'bad' }
+  ];
+  function gradeMyDraw(h) {
+    if (!h || h.grade || !h.myKeep || h.solve.status !== 'done') return;
+    const NK = S.layout(h.my9.length).NKEEPS;
+    const me = h.solve.result.observers.find((o) => o.id === 'me');
+    // In position, grade against the announcement you actually heard.
+    if (h.mySeat === 'ip' && !h.botKeep) return;
+    const off = h.mySeat === 'ip' ? h.botDrawn.length * NK : 0;
+    let best = 0;
+    for (let k = 1; k < NK; k++) if (me.ev[off + k] > me.ev[off + best]) best = k;
+    const mine = keepIndexOf(h.my9, h.myKeep);
+    const loss = me.ev[off + best] - me.ev[off + mine];
+    const tied = mine === best || loss <= me.seDiff[off + mine];
+    const grade = tied ? GRADES[0] : GRADES.find((g) => loss <= g.max) || GRADES[GRADES.length - 1];
+    h.grade = { key: grade.key, label: grade.label, loss, best, mine };
+    // session tallies + streak
+    practice.drawsGraded = (practice.drawsGraded || 0) + 1;
+    if (grade.key === 'gto') { practice.gtoHits = (practice.gtoHits || 0) + 1; practice.streak = (practice.streak || 0) + 1; practice.bestStreak = Math.max(practice.bestStreak || 0, practice.streak); }
+    else practice.streak = 0;
+    showGradeToast(h);
+    playGradeSound(grade.sound, practice.streak);
+    renderTable();
+  }
+  let toastTimer = null;
+  function showGradeToast(h) {
+    const g = h.grade, stake = practice.stake;
+    const t = el('gradeToast');
+    const streak = g.key === 'gto' && practice.streak >= 2 ? `<span class="gt-streak">🔥 ${practice.streak} in a row</span>` : '';
+    const detail = g.key === 'gto'
+      ? (g.mine === g.best ? 'You found the solver’s best draw.' : 'Statistically tied with the solver’s best draw.')
+      : `Best draw was ${g.loss.toFixed(2)} stakes (${money(g.loss * stake, { sign: false })}) better.`;
+    t.className = `grade-toast g-${g.key}`;
+    t.innerHTML = `<span class="gt-label">${g.key === 'gto' ? '✓ ' : ''}${g.label}</span><span class="gt-detail">${detail}</span>${streak}`;
+    t.classList.remove('show'); void t.offsetWidth; t.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('show'), 3200);
+  }
+  function playGradeSound(kind, streak) {
+    if (!soundEnabled) return;
+    const ctx = getAudioCtx(); if (!ctx) return;
+    const now = ctx.currentTime;
+    if (kind === 'gto') {
+      // bright two-note "ding", a step higher with each extra in a streak (capped)
+      const lift = Math.pow(2, Math.min(streak - 1, 5) / 12);
+      playTone(ctx, 1318.51 * lift, now, 0.18, 0.16, 'triangle');
+      playTone(ctx, 1975.53 * lift, now + 0.09, 0.32, 0.14, 'triangle');
+    } else if (kind === 'good') {
+      playTone(ctx, 987.77, now, 0.22, 0.12, 'triangle');
+    } else if (kind === 'meh') {
+      playTone(ctx, 392, now, 0.22, 0.12, 'sine');
+    } else {
+      // low descending "thud"
+      playTone(ctx, 220, now, 0.18, 0.18, 'sine');
+      playTone(ctx, 164.81, now + 0.12, 0.3, 0.16, 'sine');
     }
   }
 
@@ -798,6 +892,7 @@
     }
     return {
       hand: practice.handNumber,
+      grade: h.grade ? h.grade.label : null,
       pnl,
       afterDraw: afterDraw * stake,
       gto: gto === null ? null : gto * stake,
@@ -842,13 +937,16 @@
     el('sessionCount').textContent = `${stats.length} hand${stats.length === 1 ? '' : 's'} · ${money(practice.stake, { sign: false })} stakes`;
     const sum = (k) => stats.reduce((a, x) => a + (x[k] || 0), 0);
     const tiles = [['PnL', sum('pnl')], ['After-draw EV', sum('afterDraw')], ['GTO EV', sum('gto')], ['EV lost', sum('evLoss')]];
-    el('sessionTiles').innerHTML = tiles.map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v"><span class="${cls(Math.round(v))}" style="font-variant-numeric:tabular-nums">${money(v)}</span></div></div>`).join('');
+    const graded = stats.filter((x) => x.grade);
+    const hits = graded.filter((x) => x.grade === 'GTO!').length;
+    el('sessionTiles').innerHTML = tiles.map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v"><span class="${cls(Math.round(v))}" style="font-variant-numeric:tabular-nums">${money(v)}</span></div></div>`).join('') +
+      `<div class="stat"><div class="k">GTO draws</div><div class="v">${graded.length ? `${hits}/${graded.length} <span class="hint-inline" style="color:var(--muted)">(${Math.round(100 * hits / graded.length)}%)</span>` : '—'}</div>${practice.bestStreak ? `<div class="hint-inline" style="color:var(--muted)">best streak ${practice.bestStreak}${practice.streak ? ` · current ${practice.streak}` : ''}</div>` : ''}</div>`;
     el('chartLegend').innerHTML = SERIES.map((sr) => `<span class="key"><svg width="22" height="8"><line x1="1" y1="4" x2="21" y2="4" stroke="${sr.color}" stroke-width="2.5" stroke-linecap="round"${sr.dash ? ` stroke-dasharray="${sr.dash}"` : ''}/></svg>${sr.name}</span>`).join('');
     drawChart(stats);
     el('sessionTable').innerHTML = stats.length
-      ? `<div class="table-scroll"><table class="session-table"><tr><th>Hand</th>${SERIES.map((sr) => `<th>${sr.name}</th>`).join('')}</tr>` +
-        stats.map((x) => `<tr><td>#${x.hand}</td>${SERIES.map((sr) => `<td class="${x[sr.key] === null ? '' : cls(Math.round(x[sr.key]))}">${x[sr.key] === null ? '—' : money(x[sr.key])}</td>`).join('')}</tr>`).join('') +
-        `<tr><td><strong>Total</strong></td>${SERIES.map((sr) => `<td><strong>${money(sum(sr.key))}</strong></td>`).join('')}</tr></table></div>`
+      ? `<div class="table-scroll"><table class="session-table"><tr><th>Hand</th><th>Draw grade</th>${SERIES.map((sr) => `<th>${sr.name}</th>`).join('')}</tr>` +
+        stats.map((x) => `<tr><td>#${x.hand}</td><td>${x.grade || '—'}</td>${SERIES.map((sr) => `<td class="${x[sr.key] === null ? '' : cls(Math.round(x[sr.key]))}">${x[sr.key] === null ? '—' : money(x[sr.key])}</td>`).join('')}</tr>`).join('') +
+        `<tr><td><strong>Total</strong></td><td>${hits}/${graded.length} GTO</td>${SERIES.map((sr) => `<td><strong>${money(sum(sr.key))}</strong></td>`).join('')}</tr></table></div>`
       : '<p class="hint">No hands yet.</p>';
   }
 

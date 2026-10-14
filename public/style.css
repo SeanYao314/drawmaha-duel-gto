@@ -309,6 +309,52 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .practice-settings { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; background: #f6f7f9; border-radius: 10px; padding: 8px 12px; margin-bottom: 14px; font-size: .85rem; font-weight: 700; }
 .practice-settings select { margin-left: 4px; padding: 4px 6px; border-radius: 8px; border: 1px solid #d9dce1; font-weight: 600; }
 .ps-label { color: var(--muted); }
+/* position: big banner + seat theming (gold = in position / button, blue = out of position) */
+.pos-banner {
+  display: flex; align-items: center; gap: 12px; border-radius: 12px; padding: 10px 14px; margin-bottom: 14px;
+  font-size: .92rem; line-height: 1.35; border: 2px solid transparent;
+}
+.pos-banner strong { font-size: 1rem; letter-spacing: .01em; }
+.pos-banner.ip { background: #fff6d6; border-color: #e7c24a; color: #5a4300; }
+.pos-banner.oop { background: #e8f1ff; border-color: #7aa7e8; color: #123f7a; }
+.pos-banner .pb-icon { font-size: 1.3rem; flex: 0 0 auto; display: inline-flex; }
+.pos-banner.flash { animation: bannerPop .55s ease-out; }
+.dealer-btn {
+  display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%;
+  background: #fff; color: #1a1a1a; border: 2px solid #1a1a1a; font-size: .62rem; font-weight: 900; vertical-align: middle;
+}
+.dealer-btn.big { width: 30px; height: 30px; font-size: .95rem; border-width: 3px; box-shadow: 0 2px 6px rgba(0,0,0,.2); }
+.pos-chip .dealer-btn { width: 15px; height: 15px; font-size: .55rem; border-width: 1.5px; margin-right: 2px; }
+.pos-chip.oop { background: #dbe8fb; color: #123f7a; }
+.seat-me.seat-ip { border: 2px solid #e7c24a; background: #fffcf0; }
+.seat-me.seat-oop { border: 2px solid #7aa7e8; background: #f6f9ff; }
+
+/* GTO feedback */
+.grade-badge { font-size: .74rem; font-weight: 900; letter-spacing: .03em; padding: 3px 10px; border-radius: 999px; }
+.g-gto { background: #1a7f37; color: #fff; }
+.g-good { background: #d8f2df; color: #145c2a; }
+.g-inacc { background: #fff1c7; color: #6b4f00; }
+.g-mistake { background: #ffe0cc; color: #8a3a00; }
+.g-blunder { background: #fbd5d2; color: #8f1d14; }
+.g-pending { background: #eef0f2; color: var(--muted); }
+.grade-toast {
+  position: fixed; left: 50%; top: 18px; transform: translate(-50%, -140%); z-index: 50;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: center;
+  padding: 12px 18px; border-radius: 14px; box-shadow: 0 12px 30px rgba(0,0,0,.25);
+  font-size: .92rem; max-width: min(92vw, 560px); opacity: 0; transition: transform .35s cubic-bezier(.2,1.4,.4,1), opacity .25s;
+  pointer-events: none;
+}
+.grade-toast.show { transform: translate(-50%, 0); opacity: 1; }
+.grade-toast .gt-label { font-size: 1.25rem; font-weight: 900; }
+.grade-toast .gt-streak { font-weight: 800; background: rgba(255,255,255,.25); padding: 2px 10px; border-radius: 999px; }
+.grade-toast.g-gto { background: #1a7f37; color: #fff; }
+.grade-toast.g-gto.show { animation: gtoGlow 1.2s ease-out; }
+@keyframes gtoGlow { 0% { box-shadow: 0 0 0 0 rgba(26,127,55,.7); } 100% { box-shadow: 0 0 0 22px rgba(26,127,55,0), 0 12px 30px rgba(0,0,0,.25); } }
+.grade-toast.g-good { background: #e3f6e9; color: #145c2a; border: 2px solid #1a7f37; }
+.grade-toast.g-inacc { background: #fff6d6; color: #5a4300; border: 2px solid #e7c24a; }
+.grade-toast.g-mistake { background: #fff0e6; color: #8a3a00; border: 2px solid #eb6834; }
+.grade-toast.g-blunder { background: #fdecea; color: #8f1d14; border: 2px solid var(--danger); }
+
 .score-strip { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
 .score-pill {
   background: #f6f7f9; border-radius: 999px; padding: 6px 14px; font-weight: 700; font-size: .9rem;
