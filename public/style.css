@@ -579,3 +579,57 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   .contest-table .playing-card.small, .ev-table .playing-card.small { width: 26px; height: 38px; font-size: .7rem; }
   .seat-head .sort-control { margin-left: 0; }
 }
+
+/* ---------- Train hub ---------- */
+.train-menu { display: grid; gap: 10px; }
+.train-card {
+  display: flex; flex-direction: column; gap: 4px; text-align: left; border: 1px solid #d9dce1; background: #fff;
+  border-radius: 12px; padding: 12px 14px; cursor: pointer; font: inherit; color: var(--ink);
+}
+.train-card:hover { border-color: var(--felt); background: #f6f9f7; }
+.train-card strong { font-size: 1rem; }
+.train-card span { color: var(--muted); font-size: .84rem; line-height: 1.4; }
+.train-tabs { flex-wrap: wrap; }
+.ttab { flex: 1; min-width: 130px; padding: 10px; border: none; background: #f0f1f3; border-radius: 10px; cursor: pointer; font-weight: 700; color: var(--muted); }
+.ttab.active { background: var(--felt); color: #fff; }
+.tcount { display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 999px; background: var(--danger); color: #fff; font-size: .72rem; }
+.tcount:empty { display: none; }
+.tview { margin-top: 6px; }
+.practice-settings label { display: inline-flex; align-items: center; gap: 4px; }
+.ps-check { font-weight: 700; cursor: pointer; }
+.ps-check input { margin: 0; }
+.card-input { width: 110px; padding: 5px 8px; border-radius: 8px; border: 1px solid #d9dce1; font: inherit; font-weight: 600; }
+button.sm { padding: 7px 12px; font-size: .85rem; width: auto; }
+.replay-banner { background: #fdecea; border: 1px solid #f3b8b2; color: #7a1d14; border-radius: 10px; padding: 8px 12px; margin-bottom: 12px; font-size: .88rem; }
+.playing-card { position: relative; }
+.card-key { position: absolute; bottom: 2px; right: 4px; font-size: .55rem; font-weight: 800; color: #b5bac2; }
+#drCards .playing-card.marked-discard { transform: translateY(6px); }
+#drCards .playing-card.gto-keep { box-shadow: 0 0 0 3px #1a7f37, 0 2px 4px rgba(0,0,0,.15); }
+.link-btn { background: none; border: none; color: var(--muted); cursor: pointer; font: inherit; font-size: .82rem; text-decoration: underline; padding: 0; }
+.mistake-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.mistake-head p { margin: 0; flex: 1; }
+.mistake-table tr.mastered td { opacity: .5; }
+.rule-card { display: flex; gap: 12px; background: #fff; border: 1px solid #e5e7eb; border-left: 4px solid #eb6834; border-radius: 10px; padding: 10px 14px; margin-bottom: 10px; }
+.rule-n { font-weight: 900; font-size: 1.1rem; color: #eb6834; min-width: 18px; }
+.rule-text { font-weight: 800; margin-bottom: 2px; }
+.rule-tip { font-size: .88rem; line-height: 1.45; }
+.rule-meta { font-size: .75rem; color: var(--muted); margin-top: 4px; }
+.study-tab.sub { background: #f1eefc; font-size: .74rem; }
+.rv-inline { margin-top: 14px; }
+.rv-inline summary { cursor: pointer; font-weight: 800; }
+.rv-grid { display: grid; grid-template-columns: 110px minmax(80px, 1fr) minmax(140px, 2fr); gap: 6px 12px; align-items: center; font-size: .84rem; }
+.rv-h { font-size: .7rem; color: var(--muted); font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
+.rv-name { font-weight: 700; }
+.rv-share { display: flex; align-items: center; gap: 6px; }
+.rv-bar { display: inline-block; height: 12px; border-radius: 3px; background: #9aa3ad; min-width: 2px; }
+.rv-pct { font-variant-numeric: tabular-nums; color: var(--muted); font-size: .78rem; }
+@media (max-width: 640px) {
+  .rv-grid { grid-template-columns: 80px 1fr; }
+  .rv-grid > :nth-child(3n) { grid-column: 1 / -1; }
+  .rv-h:nth-child(3) { display: none; }
+}
+#drHint.with-cards { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+#drHint .mini { display: flex; gap: 3px; }
+#drHint .playing-card.small { width: 32px; height: 46px; font-size: .82rem; }
+.solver-keep-label { font-weight: 800; color: #1a7f37; }
+.study-tab.sub.active { background: #7b5cd6; color: #fff; }

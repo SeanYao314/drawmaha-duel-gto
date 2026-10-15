@@ -26,7 +26,8 @@
       pump();
       if (error) job.reject(new Error(error)); else job.resolve(result);
     };
-    w.onerror = (e) => console.error('solver worker error', e);
+    // A worker cancelled while still loading its scripts reports a load error; ignore those.
+    w.onerror = (e) => { if (!w.dead) console.error('solver worker error', e.message, e.filename, e.lineno); };
     return w;
   }
   function ensureWorkers() {
@@ -58,7 +59,7 @@
     queue.length = 0;
     for (const job of pending.values()) job.reject(new Error('cancelled'));
     pending.clear();
-    workers.forEach((w) => w.terminate());
+    workers.forEach((w) => { w.dead = true; w.terminate(); });
     workers = [];
   }
 
@@ -155,7 +156,7 @@
     }));
     check();
     onProgress(1);
-    return { summary: S.summaryOf(R, P), observers: obsResults, preset };
+    return { summary: S.summaryOf(R, P), observers: obsResults, range: S.rangeSummary(R), preset };
   }
 
   window.SolverPool = { solveFlop, cancel, workerCount: WORKER_COUNT };

@@ -16,6 +16,8 @@
   </div>
 </header>
 
+<div class="grade-toast" id="gradeToast" role="status" aria-live="polite"></div>
+
 <main id="app">
 
   <!-- LANDING -->
@@ -28,6 +30,7 @@
         <button class="tab-btn active" data-tab="create">Create Room</button>
         <button class="tab-btn" data-tab="join">Join Room</button>
         <button class="tab-btn" data-tab="practice">Practice vs Bot</button>
+        <button class="tab-btn" data-tab="train">Train</button>
       </div>
 
       <div id="tab-create" class="tab-content">
@@ -90,6 +93,16 @@
         <button id="btnPracticeStart" class="primary">Start Practice</button>
       </div>
 
+      <div id="tab-train" class="tab-content hidden">
+        <p class="hint" style="margin-top:0;">Study tools built on the solver, no full hands needed:</p>
+        <div class="train-menu">
+          <button class="train-card" data-open="drill"><strong>🎯 Drill</strong><span>Rapid-fire draw decisions, graded instantly. Filter by position, the bot's announcement (pat / draw 1 / 2 / 3), cards dealt, or close spots only.</span></button>
+          <button class="train-card" data-open="mistakes"><strong>🔁 Mistake replay</strong><span id="trainMistakeCount">Your mistakes and blunders come back until you get them right.</span></button>
+          <button class="train-card" data-open="rules"><strong>📏 Rules of thumb</strong><span>Your leaks in plain language, from every graded decision you've made.</span></button>
+          <button class="train-card" data-open="range"><strong>🗺️ Range viewer</strong><span>What every kind of hand does at equilibrium on any flop pair.</span></button>
+        </div>
+      </div>
+
       <p id="landingError" class="error hidden"></p>
     </div>
 
@@ -145,7 +158,6 @@
       </div>
 
       <div class="pos-banner" id="posBanner"></div>
-      <div class="grade-toast" id="gradeToast" role="status" aria-live="polite"></div>
 
       <!-- opponent -->
       <div class="seat seat-opp" id="oppSeat">
@@ -244,6 +256,83 @@
     </div>
   </section>
 
+  <!-- TRAIN (drills, mistake replay, rules of thumb, range viewer) -->
+  <section id="screen-train" class="screen hidden">
+    <div class="card-panel wide">
+      <div class="game-header">
+        <h2>Train</h2>
+        <div class="actions" style="width:auto;"><button id="btnTrainBack" class="secondary">Back to Menu</button></div>
+      </div>
+      <div class="tabs train-tabs">
+        <button class="ttab" data-view="drill">🎯 Drill</button>
+        <button class="ttab" data-view="mistakes">🔁 Mistakes <span id="ttabMistakes" class="tcount"></span></button>
+        <button class="ttab" data-view="rules">📏 Rules of thumb</button>
+        <button class="ttab" data-view="range">🗺️ Range viewer</button>
+      </div>
+
+      <!-- drill (also used to replay mistakes) -->
+      <div id="tview-drill" class="tview hidden">
+        <div class="practice-settings" id="drillSettings">
+          <label>Position <select id="drPos"><option value="random">Random</option><option value="oop">Out of position</option><option value="ip">In position</option></select></label>
+          <label id="drAnnWrap">Bot announces <select id="drAnn"><option value="gto">As GTO would</option><option value="0">Pat</option><option value="1">Draw 1</option><option value="2">Draw 2</option><option value="3">Draw 3</option></select></label>
+          <label>Cards <select id="drSize"><option value="7">7</option><option value="8">8</option><option value="9" selected>9</option><option value="10">10</option></select></label>
+          <label>Solver <select id="drDepth"><option value="fast">Fast</option><option value="standard" selected>Standard</option><option value="deep">Deep</option><option value="max">Max</option></select></label>
+          <label class="ps-check"><input type="checkbox" id="drClose" /> Close spots only</label>
+        </div>
+        <div class="replay-banner hidden" id="replayBanner"></div>
+        <div class="score-strip" id="drillStrip"></div>
+        <div class="pos-banner" id="drPosBanner"></div>
+        <p class="hint" id="drStatus"></p>
+        <div class="boards-row">
+          <div class="board-block"><h4>Board A</h4><div class="board-cards" id="drBoardA"></div></div>
+          <div class="board-block"><h4>Board B</h4><div class="board-cards" id="drBoardB"></div></div>
+        </div>
+        <div class="seat seat-me" id="drSeat">
+          <div class="seat-head">
+            <span class="seat-name">You</span>
+            <span class="pos-chip" id="drPosChip"></span>
+            <span class="seat-status announce hidden" id="drAnnChip"></span>
+            <span class="grade-badge hidden" id="drGrade"></span>
+            <span class="sort-control">
+              <span class="sort-label">Sort:</span>
+              <button type="button" class="sort-btn" data-sort="dealt">Dealt</button>
+              <button type="button" class="sort-btn" data-sort="rank">Rank</button>
+              <button type="button" class="sort-btn" data-sort="suit">Suit</button>
+              <button type="button" class="sort-btn" data-sort="best5">Best 5</button>
+            </span>
+          </div>
+          <div class="seat-cards" id="drCards"></div>
+          <p class="hint keep-hint" id="drHint"></p>
+          <div class="actions">
+            <button id="drClear" class="secondary">Clear</button>
+            <button id="drSkip" class="secondary">Skip</button>
+            <button id="drSubmit" class="primary" disabled>Mark cards to discard</button>
+          </div>
+        </div>
+        <div id="drResult" class="study-panel hidden"></div>
+        <p class="hint" style="font-size:.78rem">Keys: <strong>1–9, 0</strong> mark cards in the order shown · <strong>Enter</strong> submit / next.</p>
+      </div>
+
+      <div id="tview-mistakes" class="tview hidden"></div>
+      <div id="tview-rules" class="tview hidden"></div>
+
+      <div id="tview-range" class="tview hidden">
+        <div class="practice-settings">
+          <label>Board A flop <input id="rvA" class="card-input" placeholder="e.g. Kh 9d 4s" /></label>
+          <label>Board B flop <input id="rvB" class="card-input" placeholder="e.g. Jc Jd 6h" /></label>
+          <button id="rvRandom" class="secondary sm">Random flops</button>
+          <label>Cards <select id="rvSize"><option value="7">7</option><option value="8">8</option><option value="9" selected>9</option><option value="10">10</option></select></label>
+          <label>Solver <select id="rvDepth"><option value="fast">Fast</option><option value="standard" selected>Standard</option><option value="deep">Deep</option><option value="max">Max</option></select></label>
+          <button id="rvSolve" class="primary sm">Solve</button>
+        </div>
+        <p class="error hidden" id="rvError"></p>
+        <div class="boards-row" id="rvBoards"></div>
+        <div class="progress hidden" id="rvProgress"><div class="progress-bar" id="rvProgressBar"></div></div>
+        <div id="rvOut"></div>
+      </div>
+    </div>
+  </section>
+
 </main>
 
 <script src="/lib/poker.js"></script>
@@ -252,5 +341,6 @@
 <script src="/lib/solver.js"></script>
 <script src="solver-pool.js"></script>
 <script src="client.js"></script>
+<script src="trainer.js"></script>
 </body>
 </html>

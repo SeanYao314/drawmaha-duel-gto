@@ -112,6 +112,25 @@ Below the table, practice mode keeps a running **Session** panel. It has the tot
 
 A new hand's numbers join the graph only once its reveal has finished, so the graph never spoils a result.
 
+## Train hub
+
+The landing page's **Train** tab opens study tools that don't need full hands. Everything runs in your browser, and progress is kept in local storage.
+
+- **🎯 Drill.** Rapid-fire draw decisions, each graded instantly with the same sound and pop-up as practice mode. You see the flops (and, in position, the bot's announcement) and mark discards. Keys **1–9 / 0** toggle cards in the order shown, and **Enter** submits or moves to the next spot. After answering, you get the solver's keep, the top keeps with EV ± error, the "hands like yours" mix, and a range viewer for that flop. The next spot is solved in the background while you think, so there's usually no wait. Filters:
+  - **Position:** random, out of position, or in position.
+  - **Bot announces:** *as GTO would* (drawn from the equilibrium's own frequencies), or fixed to **pat**, **draw 1**, **draw 2** or **draw 3**. Use this to practice responding to a specific announcement.
+  - **Cards dealt:** 7–10.
+  - **Solver depth.**
+  - **Close spots only:** the best keep and the best keep with a different draw count are within 0.15 stakes of each other, i.e. the "pat or draw?" decisions. Spots that don't qualify are skipped automatically.
+- **🔁 Mistake replay.** Every **Mistake** or **Blunder** from practice games or drills is saved. Replays use spaced repetition: a correct answer (GTO or Good) moves the spot to the next box (due again in 10 minutes, then 1, 3 and 7 days), and a wrong one sends it back to box 0. Five correct in a row retires it. The tab badge shows how many are due.
+- **📏 Rules of thumb.** Mines your last 400 graded decisions for patterns that cost you EV, and states each one in plain language with what it cost. Examples: breaking a pat to draw, patting when the solver draws, drawing too many or too few cards, the right count but the wrong cards, your weakest position or announcement, and hand types or flop textures (paired, flush-heavy) where you lose most. A breakdown table shows GTO rate and average EV lost by spot type.
+- **🗺️ Range viewer.** Enter any two flops (or pick random ones) and solve. Each hand type is labelled by the best plain 5-card hand in the dealt cards, and three tabs show:
+  - how out-of-position hands draw at equilibrium;
+  - how in-position hands respond to each announcement;
+  - what out-of-position holds when it makes each announcement.
+
+  The same viewer is in the practice study panel and after every drill.
+
 ### How the solver works (lib/solver.js)
 
 There's no betting, so all of the strategy is in the two keep decisions and in what OOP's draw count gives away. Once the flops are out, the rest of the hand is a small two-player game with hidden information. The exact game is far too big to solve: with 9 cards, about 1.2 billion hands per player and 372 ways to keep from each. So each flop pair is solved on a large sample of each player's range:
@@ -175,6 +194,7 @@ public/style.css          Styling (same look as Taiwanese Poker; 4-color deck)
 public/client.js          Live game client, practice controller, study panel
 public/solver-pool.js     Splits a solve across Web Workers
 public/solver-worker.js   Worker entry point
+public/trainer.js         Train hub: drills, mistake replay, rules of thumb, range viewer
 experiments/solve_flop.js Command-line solver
 tests/run.js              Test suite (node tests/run.js)
 ```

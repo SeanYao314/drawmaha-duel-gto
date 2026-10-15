@@ -135,6 +135,7 @@
     try { localStorage.setItem(CARD_SORT_KEY, cardSortMode); } catch (e) { /* ignore */ }
     syncSortButtons();
     renderTable();
+    if (window.DDUI && window.DDUI.onSort) window.DDUI.onSort();
   }));
   syncSortButtons();
 
@@ -197,7 +198,7 @@
     show('landingError');
   }
   function showScreen(name) {
-    ['landing', 'lobby', 'table'].forEach((s) => toggle('screen-' + s, s === name));
+    ['landing', 'lobby', 'table', 'train'].forEach((s) => toggle('screen-' + s, s === name));
   }
 
   // =====================================================================
@@ -334,6 +335,7 @@
   const FINAL_STAGE = 7; // 1 turns · 2 rivers · 3 opp cards · 4-6 contests · 7 totals
 
   function currentVM() {
+    if (mode === 'train') return null;
     if (mode === 'live') return liveVM();
     if (mode === 'practice') return practiceVM();
     return null;
@@ -795,6 +797,32 @@
     { key: 'mistake', label: 'Mistake', note: '', max: 0.75, sound: 'bad' },
     { key: 'blunder', label: 'Blunder', note: '', max: Infinity, sound: 'bad' }
   ];
+  function gradeFor(loss, seDiff, isBest) {
+    const tied = isBest || loss <= seDiff;
+    return tied ? GRADES[0] : GRADES.find((g) => loss <= g.max) || GRADES[GRADES.length - 1];
+  }
+
+  // ---------- decision log (feeds mistake replay and rules of thumb) ----------
+  const DECISIONS_KEY = 'drawmaha-duel-decisions', MISTAKES_KEY = 'drawmaha-duel-mistakes';
+  function loadJSON(key, fallback) { try { return JSON.parse(localStorage.getItem(key) || 'null') || fallback; } catch (e) { return fallback; } }
+  function saveJSON(key, v) { try { localStorage.setItem(key, JSON.stringify(v)); } catch (e) { /* storage full or blocked */ } }
+  function recordDecision(rec) {
+    const r = { ...rec, t: Date.now(), myDraw: 5 - rec.myKeep.length, bestDraw: 5 - rec.bestKeep.length };
+    const log = loadJSON(DECISIONS_KEY, []);
+    log.push(r);
+    while (log.length > 1500) log.shift();
+    saveJSON(DECISIONS_KEY, log);
+    // Mistakes and blunders go into the replay deck (unless this was itself a replay).
+    if ((r.grade === 'mistake' || r.grade === 'blunder') && r.source !== 'replay') {
+      const deck = loadJSON(MISTAKES_KEY, []);
+      deck.push({ id: `${r.t}-${Math.random().toString(36).slice(2, 7)}`, spot: { flopA: r.flopA, flopB: r.flopB, hand: r.hand, seat: r.seat, ann: r.ann },
+        firstGrade: r.grade, firstLoss: r.loss, myKeep: r.myKeep, bestKeep: r.bestKeep, added: r.t, box: 0, due: r.t, attempts: 0, correct: 0 });
+      while (deck.length > 300) deck.shift();
+      saveJSON(MISTAKES_KEY, deck);
+    }
+    if (window.DDUI && window.DDUI.onDecision) window.DDUI.onDecision(r);
+  }
+
   function gradeMyDraw(h) {
     if (!h || h.grade || !h.myKeep || h.solve.status !== 'done') return;
     const NK = S.layout(h.my9.length).NKEEPS;
@@ -806,9 +834,13 @@
     for (let k = 1; k < NK; k++) if (me.ev[off + k] > me.ev[off + best]) best = k;
     const mine = keepIndexOf(h.my9, h.myKeep);
     const loss = me.ev[off + best] - me.ev[off + mine];
-    const tied = mine === best || loss <= me.seDiff[off + mine];
-    const grade = tied ? GRADES[0] : GRADES.find((g) => loss <= g.max) || GRADES[GRADES.length - 1];
+    const grade = gradeFor(loss, me.seDiff[off + mine], mine === best);
     h.grade = { key: grade.key, label: grade.label, loss, best, mine };
+    recordDecision({
+      source: 'game', flopA: h.flopA, flopB: h.flopB, hand: h.my9, seat: h.mySeat,
+      ann: h.mySeat === 'ip' ? h.botDrawn.length : null, preset: h.preset,
+      myKeep: h.myKeep, bestKeep: S.keepCards(h.my9, best), loss, grade: grade.key
+    });
     // session tallies + streak
     practice.drawsGraded = (practice.drawsGraded || 0) + 1;
     if (grade.key === 'gto') { practice.gtoHits = (practice.gtoHits || 0) + 1; practice.streak = (practice.streak || 0) + 1; practice.bestStreak = Math.max(practice.bestStreak || 0, practice.streak); }
@@ -818,10 +850,10 @@
     renderTable();
   }
   let toastTimer = null;
-  function showGradeToast(h) {
-    const g = h.grade, stake = practice.stake;
+  function showGradeToast(h) { showGradeToastFor(h.grade, practice.stake, practice.streak); }
+  function showGradeToastFor(g, stake, streakCount) {
     const t = el('gradeToast');
-    const streak = g.key === 'gto' && practice.streak >= 2 ? `<span class="gt-streak">🔥 ${practice.streak} in a row</span>` : '';
+    const streak = g.key === 'gto' && streakCount >= 2 ? `<span class="gt-streak">🔥 ${streakCount} in a row</span>` : '';
     const detail = g.key === 'gto'
       ? (g.mine === g.best ? 'You found the solver’s best draw.' : 'Statistically tied with the solver’s best draw.')
       : `Best draw was ${g.loss.toFixed(2)} stakes (${money(g.loss * stake, { sign: false })}) better.`;
@@ -1261,6 +1293,9 @@
       <p class="hint" style="margin-top:8px">The number next to each announcement is IP's equilibrium EV after hearing it — the bigger it is, the more that announcement costs OOP.</p>
     </div>`;
 
+    // --- range viewer for this flop ---
+    html += `<details class="rv-inline"${h.rvOpen ? ' open' : ''}><summary>🗺️ Range viewer for this flop</summary><div class="rv-host"></div></details>`;
+
     // --- the bot's play (only once its cards are visible) ---
     if (h.results && h.botKi !== undefined) {
       const bd = h.botSeat === 'ip' ? h.myDrawn.length : null;
@@ -1287,11 +1322,28 @@
     body.querySelectorAll('tr[data-bot-ki] .keepcell').forEach((td) => {
       td.appendChild(miniCards(S.keepCards(h.bot9, Number(td.parentElement.dataset.botKi))));
     });
-    body.querySelectorAll('.study-tab').forEach((b) => b.addEventListener('click', () => {
+    body.querySelectorAll('.study-tab[data-d]').forEach((b) => b.addEventListener('click', () => {
       h.studyTab = Number(b.dataset.d);
       renderStudy();
     }));
+    const rvHost = body.querySelector('.rv-host');
+    if (rvHost && res.range && window.DDTrainer) {
+      window.DDTrainer.renderRangeViewer(rvHost, res.range, iAmIP ? { tab: 'ip', ann: d } : { tab: 'oop' });
+      const det = rvHost.closest('details');
+      det.addEventListener('toggle', () => { h.rvOpen = det.open; });
+    }
   }
+
+  // Shared helpers for the training hub (public/trainer.js).
+  window.DDUI = {
+    el, show, hide, toggle, esc, money, units, cls, cardEl, miniCards, sortCards, bestFiveOrder,
+    getSortMode: () => cardSortMode, DRAW_NAMES, evText, mixBar, mixLegend, keepIndexOf,
+    gradeFor, GRADES, showGradeToastFor, playGradeSound, recordDecision, loadJSON, saveJSON,
+    DECISIONS_KEY, MISTAKES_KEY, showScreen,
+    enterTrain: () => { if (practice) { window.SolverPool.cancel(); practice = null; } if (es) { es.close(); es = null; } mode = 'train'; },
+    leaveTrain: () => { mode = null; },
+    onSort: null, onDecision: null
+  };
 
   // =====================================================================
   // BOOT / REJOIN
