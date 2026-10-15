@@ -224,7 +224,7 @@
           <summary>Hand-by-hand table</summary>
           <div id="sessionTable"></div>
         </details>
-        <p class="study-foot"><strong>PnL</strong>: money actually won or lost. <strong>After-draw EV</strong>: what your final five were worth against the bot's actual final five, averaged over every possible turn and river — PnL with the board luck taken out. <strong>GTO EV</strong>: what your dealt cards were worth with the solver's best draw against the equilibrium range — how good your starting hands were. <strong>EV lost</strong>: the best draw's EV minus the EV of the draw you chose (always ≤ 0) — what your drawing decisions cost. All lines are running totals.</p>
+        <p class="study-foot"><strong>PnL</strong>: money actually won or lost. <strong>After-draw EV</strong>: what your final five were worth against the bot's actual final five, averaged over every possible turn and river — PnL with the board luck taken out. <strong>GTO EV</strong>: what your dealt cards were worth with the solver's best draw against the equilibrium range — how good your starting hands were. <strong>GTO after-draw EV</strong>: the solver's best draw played against the bot's actual hand, averaged over the cards you'd have drawn and every turn and river (if you were out of position and the best draw announces a different count, the bot answers that announcement the solver's way) — GTO EV with the bot's real cards in place of its range. <strong>EV lost</strong>: the best draw's EV minus the EV of the draw you chose (always ≤ 0) — what your drawing decisions cost. All lines are running totals.</p>
       </div>
 
       <!-- solver study panel (practice) -->

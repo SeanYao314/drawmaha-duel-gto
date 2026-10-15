@@ -102,11 +102,12 @@ The **Solver study** panel stays hidden until the hand is over, unless you click
 
 ### Session graph
 
-Below the table, practice mode keeps a running **Session** panel. It has four totals, a line chart by hand (hover for the values after any hand), and a hand-by-hand table:
+Below the table, practice mode keeps a running **Session** panel. It has the totals, a line chart by hand (hover for the values after any hand), and a hand-by-hand table:
 
 - **PnL:** the money that actually changed hands.
 - **After-draw EV:** what your final five were worth against the bot's actual final five, averaged exactly over every possible turn and river on both boards (discards and both draws removed from the deck). This is PnL with the board luck taken out: if you were behind after the draw but hit both boards, PnL goes up while after-draw EV goes down.
 - **GTO EV:** the EV of the solver's best draw for your dealt cards against the equilibrium range (given the bot's real announcement when you're in position). It measures how good your starting hands were.
+- **GTO after-draw EV:** the solver's best draw played against the bot's actual hand instead of its range, averaged by Monte Carlo (12,000 runouts) over the cards you would have drawn and every turn and river. If you were out of position and the best draw would have announced a different count, the bot answers that announcement the way the solver plays it. Comparing GTO EV with this line shows how much the bot's actual cards helped or hurt you. Comparing it with After-draw EV shows what your draw choice and the cards you drew were worth.
 - **EV lost:** the best draw's EV minus the EV of the draw you actually chose. It's always ≤ 0. For example, picking a keep worth +1.30 when the best was +1.43 adds −0.13 stakes (−$13 at $100).
 
 A new hand's numbers join the graph only once its reveal has finished, so the graph never spoils a result.

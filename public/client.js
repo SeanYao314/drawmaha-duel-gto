@@ -917,15 +917,28 @@
     const stake = practice.stake;
     const known = [...h.flopA, ...h.flopB, ...h.my9, ...h.bot9, ...h.myDrawn, ...h.botDrawn];
     const afterDraw = S.afterDrawEquity([...h.myKeep, ...h.myDrawn], [...h.botKeep, ...h.botDrawn], h.flopA, h.flopB, known);
-    let gto = null, mine = null;
+    let gto = null, mine = null, gtoAfterDraw = null;
     if (h.solve.status === 'done') {
-      const NK = S.layout(h.my9.length).NKEEPS;
+      const L = S.layout(h.my9.length), NK = L.NKEEPS;
       const me = h.solve.result.observers.find((o) => o.id === 'me');
+      const bot = h.solve.result.observers.find((o) => o.id === 'bot');
       const off = h.mySeat === 'ip' ? h.botDrawn.length * NK : 0;
-      let best = -Infinity;
-      for (let k = 0; k < NK; k++) best = Math.max(best, me.ev[off + k]);
-      gto = best;
+      let bestK = 0;
+      for (let k = 1; k < NK; k++) if (me.ev[off + k] > me.ev[off + bestK]) bestK = k;
+      gto = me.ev[off + bestK];
       mine = me.ev[off + keepIndexOf(h.my9, h.myKeep)];
+      // GTO after-draw EV: the solver's best keep vs the bot's actual hand. If I'm out
+      // of position and the best keep would have announced a different draw count, the
+      // bot would have answered that announcement instead — use its solver play for it.
+      const bestKeep = S.keepCards(h.my9, bestK), bestDraw = L.KEEP_DRAW[bestK];
+      let oppKeep = h.botKeep, oppDrawn = h.botDrawn, oppDraw = 0;
+      if (h.mySeat === 'oop' && bestDraw !== h.myDrawn.length) {
+        let bk = 0;
+        for (let k = 1; k < NK; k++) if (bot.freq[bestDraw * NK + k] > bot.freq[bestDraw * NK + bk]) bk = k;
+        oppKeep = S.keepCards(h.bot9, bk); oppDrawn = null; oppDraw = L.KEEP_DRAW[bk];
+      }
+      const dead = [...h.flopA, ...h.flopB, ...h.my9, ...h.bot9, ...(oppDrawn || [])];
+      gtoAfterDraw = S.keepEquityVs({ meKeep: bestKeep, meDraw: bestDraw, oppKeep, oppDrawn, oppDraw, flopA: h.flopA, flopB: h.flopB, dead, samples: 12000 });
     }
     return {
       hand: practice.handNumber,
@@ -933,6 +946,7 @@
       pnl,
       afterDraw: afterDraw * stake,
       gto: gto === null ? null : gto * stake,
+      gtoAfterDraw: gtoAfterDraw === null ? null : gtoAfterDraw * stake,
       evLoss: gto === null ? null : (mine - gto) * stake
     };
   }
@@ -941,7 +955,8 @@
     { key: 'pnl', name: 'PnL', color: 'var(--series-1)' },
     { key: 'afterDraw', name: 'After-draw EV', color: 'var(--series-2)' },
     { key: 'gto', name: 'GTO EV', color: 'var(--series-3)' },
-    { key: 'evLoss', name: 'EV lost', color: 'var(--series-4)', dash: '6 4' }
+    { key: 'evLoss', name: 'EV lost', color: 'var(--series-4)', dash: '6 4' },
+    { key: 'gtoAfterDraw', name: 'GTO after-draw EV', color: 'var(--series-5)', dash: '1 4' }
   ];
 
   function cumulativeSeries(stats) {
@@ -973,7 +988,7 @@
     show('sessionPanel');
     el('sessionCount').textContent = `${stats.length} hand${stats.length === 1 ? '' : 's'} · ${money(practice.stake, { sign: false })} stakes`;
     const sum = (k) => stats.reduce((a, x) => a + (x[k] || 0), 0);
-    const tiles = [['PnL', sum('pnl')], ['After-draw EV', sum('afterDraw')], ['GTO EV', sum('gto')], ['EV lost', sum('evLoss')]];
+    const tiles = [['PnL', sum('pnl')], ['After-draw EV', sum('afterDraw')], ['GTO EV', sum('gto')], ['GTO after-draw EV', sum('gtoAfterDraw')], ['EV lost', sum('evLoss')]];
     const graded = stats.filter((x) => x.grade);
     const hits = graded.filter((x) => x.grade === 'GTO!').length;
     el('sessionTiles').innerHTML = tiles.map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v"><span class="${cls(Math.round(v))}" style="font-variant-numeric:tabular-nums">${money(v)}</span></div></div>`).join('') +

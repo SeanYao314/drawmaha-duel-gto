@@ -450,7 +450,7 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .viz-root {
   --surface-1: #fcfcfb; --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #8a8984;
   --grid: #e6e5e1; --axis: #c9c8c3;
-  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100;
+  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100; --series-5: #e87ba4;
   margin-top: 12px;
 }
 .chart-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: .78rem; color: var(--text-secondary); font-weight: 600; margin-bottom: 6px; }
