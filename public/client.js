@@ -904,20 +904,31 @@
   }
 
   // =====================================================================
-  // SESSION GRAPH (practice): PnL, after-draw EV, GTO EV, EV lost to draw choices
+  // SESSION GRAPH (practice): PnL, post-discard EV, GTO EV, GTO post-discard EV, EV lost
   // =====================================================================
   // Per-hand numbers, in dollars:
-  //   pnl       — what actually changed hands
-  //   afterDraw — exact EV of my final five vs the bot's final five over all turns/rivers
-  //   gto       — EV of the solver's best keep for my dealt cards vs the equilibrium range
-  //   evLoss    — EV of the keep I chose minus that best keep (≤ 0)
+  //   pnl            — what actually changed hands
+  //   postDiscard    — my kept cards vs the bot's kept cards, averaged over both players'
+  //                    draws and every turn/river: the luck that comes after the decisions
+  //   gto            — EV of the solver's best keep for my dealt cards vs the equilibrium range
+  //   gtoPostDiscard — the solver's best keep vs the bot's kept cards, same averaging
+  //                    (identical to postDiscard whenever I made the GTO keep)
+  //   evLoss         — EV of the keep I chose minus that best keep (≤ 0)
   // When I'm in position, "vs the equilibrium range" means given the bot's actual
   // announcement, since that's what I knew when I drew.
+  const POST_DISCARD_SAMPLES = 12000;
   function handStats(h, pnl) {
     const stake = practice.stake;
-    const known = [...h.flopA, ...h.flopB, ...h.my9, ...h.bot9, ...h.myDrawn, ...h.botDrawn];
-    const afterDraw = S.afterDrawEquity([...h.myKeep, ...h.myDrawn], [...h.botKeep, ...h.botDrawn], h.flopA, h.flopB, known);
-    let gto = null, mine = null, gtoAfterDraw = null;
+    const dead = [...h.flopA, ...h.flopB, ...h.my9, ...h.bot9];
+    // One seed per hand: both post-discard numbers use the same shuffles, so the gap
+    // between them is the keep, not sampling noise.
+    const seed = (Math.random() * 2 ** 31) | 0;
+    const equity = (meKeep, oppKeep) => S.keepEquityVs({
+      meKeep, meDraw: 5 - meKeep.length, oppKeep, oppDraw: 5 - oppKeep.length,
+      flopA: h.flopA, flopB: h.flopB, dead, samples: POST_DISCARD_SAMPLES, seed
+    });
+    const postDiscard = equity(h.myKeep, h.botKeep);
+    let gto = null, mine = null, gtoPostDiscard = null;
     if (h.solve.status === 'done') {
       const L = S.layout(h.my9.length), NK = L.NKEEPS;
       const me = h.solve.result.observers.find((o) => o.id === 'me');
@@ -925,38 +936,42 @@
       const off = h.mySeat === 'ip' ? h.botDrawn.length * NK : 0;
       let bestK = 0;
       for (let k = 1; k < NK; k++) if (me.ev[off + k] > me.ev[off + bestK]) bestK = k;
+      const myK = keepIndexOf(h.my9, h.myKeep);
       gto = me.ev[off + bestK];
-      mine = me.ev[off + keepIndexOf(h.my9, h.myKeep)];
-      // GTO after-draw EV: the solver's best keep vs the bot's actual hand. If I'm out
-      // of position and the best keep would have announced a different draw count, the
-      // bot would have answered that announcement instead — use its solver play for it.
-      const bestKeep = S.keepCards(h.my9, bestK), bestDraw = L.KEEP_DRAW[bestK];
-      let oppKeep = h.botKeep, oppDrawn = h.botDrawn, oppDraw = 0;
-      if (h.mySeat === 'oop' && bestDraw !== h.myDrawn.length) {
-        let bk = 0;
-        for (let k = 1; k < NK; k++) if (bot.freq[bestDraw * NK + k] > bot.freq[bestDraw * NK + bk]) bk = k;
-        oppKeep = S.keepCards(h.bot9, bk); oppDrawn = null; oppDraw = L.KEEP_DRAW[bk];
+      mine = me.ev[off + myK];
+      if (bestK === myK) {
+        gtoPostDiscard = postDiscard;
+      } else {
+        // If I'm out of position and the best keep would have announced a different draw
+        // count, the bot would have answered that announcement instead — use its solver
+        // play for it. Otherwise the bot's actual keep stands.
+        const bestKeep = S.keepCards(h.my9, bestK), bestDraw = L.KEEP_DRAW[bestK];
+        let oppKeep = h.botKeep;
+        if (h.mySeat === 'oop' && bestDraw !== h.myDrawn.length) {
+          let bk = 0;
+          for (let k = 1; k < NK; k++) if (bot.freq[bestDraw * NK + k] > bot.freq[bestDraw * NK + bk]) bk = k;
+          oppKeep = S.keepCards(h.bot9, bk);
+        }
+        gtoPostDiscard = equity(bestKeep, oppKeep);
       }
-      const dead = [...h.flopA, ...h.flopB, ...h.my9, ...h.bot9, ...(oppDrawn || [])];
-      gtoAfterDraw = S.keepEquityVs({ meKeep: bestKeep, meDraw: bestDraw, oppKeep, oppDrawn, oppDraw, flopA: h.flopA, flopB: h.flopB, dead, samples: 12000 });
     }
     return {
       hand: practice.handNumber,
       grade: h.grade ? h.grade.label : null,
       pnl,
-      afterDraw: afterDraw * stake,
+      postDiscard: postDiscard * stake,
       gto: gto === null ? null : gto * stake,
-      gtoAfterDraw: gtoAfterDraw === null ? null : gtoAfterDraw * stake,
+      gtoPostDiscard: gtoPostDiscard === null ? null : gtoPostDiscard * stake,
       evLoss: gto === null ? null : (mine - gto) * stake
     };
   }
 
   const SERIES = [
     { key: 'pnl', name: 'PnL', color: 'var(--series-1)' },
-    { key: 'afterDraw', name: 'After-draw EV', color: 'var(--series-2)' },
+    { key: 'postDiscard', name: 'Post-discard EV', color: 'var(--series-2)' },
     { key: 'gto', name: 'GTO EV', color: 'var(--series-3)' },
     { key: 'evLoss', name: 'EV lost', color: 'var(--series-4)', dash: '6 4' },
-    { key: 'gtoAfterDraw', name: 'GTO after-draw EV', color: 'var(--series-5)', dash: '1 4' }
+    { key: 'gtoPostDiscard', name: 'GTO post-discard EV', color: 'var(--series-5)', dash: '1 4' }
   ];
 
   function cumulativeSeries(stats) {
@@ -988,7 +1003,7 @@
     show('sessionPanel');
     el('sessionCount').textContent = `${stats.length} hand${stats.length === 1 ? '' : 's'} · ${money(practice.stake, { sign: false })} stakes`;
     const sum = (k) => stats.reduce((a, x) => a + (x[k] || 0), 0);
-    const tiles = [['PnL', sum('pnl')], ['After-draw EV', sum('afterDraw')], ['GTO EV', sum('gto')], ['GTO after-draw EV', sum('gtoAfterDraw')], ['EV lost', sum('evLoss')]];
+    const tiles = [['PnL', sum('pnl')], ['Post-discard EV', sum('postDiscard')], ['GTO EV', sum('gto')], ['GTO post-discard EV', sum('gtoPostDiscard')], ['EV lost', sum('evLoss')]];
     const graded = stats.filter((x) => x.grade);
     const hits = graded.filter((x) => x.grade === 'GTO!').length;
     el('sessionTiles').innerHTML = tiles.map(([k, v]) => `<div class="stat"><div class="k">${k}</div><div class="v"><span class="${cls(Math.round(v))}" style="font-variant-numeric:tabular-nums">${money(v)}</span></div></div>`).join('') +
