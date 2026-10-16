@@ -24,7 +24,7 @@
   <section id="screen-landing" class="screen">
     <div class="card-panel">
       <h1>Drawmaha Duel</h1>
-      <p class="subtitle">Heads-up. Nine cards (or 7, 8, 10), two flops, one draw. Your final five play as a 5-card hand <em>and</em> as a PLO5 hand on each board &mdash; three contests, and sweeping all three scoops for double.</p>
+      <p class="subtitle">Heads-up or 3-handed. Nine cards (or 7, 8, 10), two flops, one draw. Your final five play as a 5-card hand <em>and</em> as a PLO5 hand on each board &mdash; three contests, and sweeping all three scoops for double.</p>
 
       <div class="tabs">
         <button class="tab-btn active" data-tab="create">Create Room</button>
@@ -37,10 +37,16 @@
         <label>Your name
           <input id="createName" type="text" maxlength="20" placeholder="e.g. Bob" />
         </label>
+        <label>Players
+          <select id="createPlayers">
+            <option value="2" selected>Heads-up &mdash; 2 players</option>
+            <option value="3">3-handed &mdash; every pair plays its own matchup</option>
+          </select>
+        </label>
         <label>Stake per contest
           <select id="createStake"></select>
         </label>
-        <p class="hint" style="margin-top:-4px;">Each of the 3 contests pays this amount; a scoop pays double (6&times;).</p>
+        <p class="hint" style="margin-top:-4px;">Each of the 3 contests pays this amount; a scoop pays double (6&times;). 3-handed, you play those contests against each opponent separately.</p>
         <label>Cards dealt
           <select id="createHandSize">
             <option value="7">7 cards &mdash; more draws, more variance</option>
@@ -64,11 +70,17 @@
 
       <div id="tab-practice" class="tab-content hidden">
         <p class="hint" style="margin-top:0;">
-          Play heads-up against a bot that solves every flop for an approximate equilibrium
-          before it draws. Afterwards (or mid-hand, if you peek) the study panel shows the
-          EV of every keep for your hand, the equilibrium mix, and how the in-position
-          player should react to each draw count.
+          Play against bots that solve every flop for an approximate equilibrium
+          before they draw &mdash; one bot heads-up, or two bots 3-handed. Afterwards (or mid-hand, if you peek) the study panel shows the
+          EV of every keep for your hand, the equilibrium mix, and how later players
+          should react to each draw count.
         </p>
+        <label>Players
+          <select id="practicePlayers">
+            <option value="2" selected>Heads-up &mdash; you vs 1 bot</option>
+            <option value="3">3-handed &mdash; you vs 2 bots (solves take ~4&times; longer)</option>
+          </select>
+        </label>
         <label>Stake per contest
           <select id="practiceStake"></select>
         </label>
@@ -96,7 +108,7 @@
       <div id="tab-train" class="tab-content hidden">
         <p class="hint" style="margin-top:0;">Study tools built on the solver, no full hands needed:</p>
         <div class="train-menu">
-          <button class="train-card" data-open="drill"><strong>🎯 Drill</strong><span>Rapid-fire draw decisions, graded instantly. Filter by position, the bot's announcement (pat / draw 1 / 2 / 3), cards dealt, or close spots only.</span></button>
+          <button class="train-card" data-open="drill"><strong>🎯 Drill</strong><span>Rapid-fire draw decisions, graded instantly, heads-up or 3-handed. Filter by position, the bots' announcements (pat / draw 1 / 2 / 3), cards dealt, or close spots only.</span></button>
           <button class="train-card" data-open="mistakes"><strong>🔁 Mistake replay</strong><span id="trainMistakeCount">Your mistakes and blunders come back until you get them right.</span></button>
           <button class="train-card" data-open="rules"><strong>📏 Rules of thumb</strong><span>Your leaks in plain language, from every graded decision you've made.</span></button>
           <button class="train-card" data-open="range"><strong>🗺️ Range viewer</strong><span>What every kind of hand does at equilibrium on any flop pair.</span></button>
@@ -117,6 +129,7 @@
         <li>Your 5 cards are scored three ways, each worth one stake: as a plain <strong>5-card hand</strong>, and as a <strong>PLO5</strong> hand on each board (exactly 2 of your cards + exactly 3 board cards).</li>
         <li>Win all three outright and you <strong>scoop</strong>: double money (6 stakes instead of 3). An exact tie in a contest is a push &mdash; and means no scoop.</li>
         <li>The button switches every hand. At showdown both players' discards are shown too.</li>
+        <li><strong>3-handed:</strong> the player left of the button acts first, then the next player, then the button &mdash; each hearing the earlier draw counts. Every pair of players then settles the three contests (and any scoop) between themselves, so you play two head-up matchups at once. The button moves one seat each hand.</li>
       </ul>
     </details>
   </section>
@@ -125,13 +138,13 @@
   <section id="screen-lobby" class="screen hidden">
     <div class="card-panel">
       <h2>Room <span id="lobbyCode"></span></h2>
-      <p class="subtitle">Send this link to your opponent.</p>
+      <p class="subtitle" id="lobbySub">Send this link to your opponent.</p>
       <div class="share-row">
         <input id="shareLink" type="text" readonly />
         <button id="btnCopyLink">Copy Link</button>
       </div>
       <p class="info-badge" id="lobbyStake"></p>
-      <h3>Players (<span id="lobbyCount"></span>/2)</h3>
+      <h3>Players (<span id="lobbyCount"></span>/<span id="lobbyMax">2</span>)</h3>
       <ul id="lobbyPlayers" class="player-list"></ul>
       <button id="btnStart" class="primary hidden">Start Game</button>
       <p id="lobbyHint" class="hint"></p>
@@ -159,15 +172,8 @@
 
       <div class="pos-banner" id="posBanner"></div>
 
-      <!-- opponent -->
-      <div class="seat seat-opp" id="oppSeat">
-        <div class="seat-head">
-          <span class="seat-name" id="oppName"></span>
-          <span class="pos-chip" id="oppPos"></span>
-          <span class="seat-status" id="oppStatus"></span>
-        </div>
-        <div class="seat-cards" id="oppCards"></div>
-      </div>
+      <!-- opponents (one heads-up, two 3-handed), built by client.js -->
+      <div class="opp-seats" id="oppSeats"></div>
 
       <!-- boards -->
       <div class="boards-row" id="boardsRow">
@@ -211,6 +217,7 @@
         <p id="revealStatus" class="reveal-status hidden"></p>
         <div id="scoopBanner" class="scoop-banner hidden"></div>
         <table class="contest-table" id="contestTable"></table>
+        <div class="matchup-list hidden" id="matchupList"></div>
         <div class="hand-total" id="handTotal"></div>
         <div class="actions">
           <button id="btnSkipReveal" class="secondary hidden">Skip ▶</button>
@@ -243,7 +250,7 @@
           <summary>Hand-by-hand table</summary>
           <div id="sessionTable"></div>
         </details>
-        <p class="study-foot"><strong>PnL</strong>: money actually won or lost. <strong>Post-discard EV</strong>: your kept cards against the bot's kept cards, averaged over both players' draws and every turn and river — everything left to chance once both of you have discarded. <strong>GTO EV</strong>: what your dealt cards were worth with the solver's best draw against the equilibrium range — how good your starting hands were. <strong>GTO post-discard EV</strong>: the same as post-discard EV, but with the solver's best keep in place of yours (if you were out of position and that keep announces a different count, the bot answers it the solver's way); when you make the GTO keep, the two lines match. <strong>EV lost</strong>: the best draw's EV minus the EV of the draw you chose (always ≤ 0) — what your drawing decisions cost against the range. The big chart shows running totals; the <strong>Per hand</strong> strips underneath show each hand on its own (bars above the line are gains, below are losses, all on one shared scale). Hover either one to inspect a hand.</p>
+        <p class="study-foot"><strong>PnL</strong>: money actually won or lost. <strong>Post-discard EV</strong>: your kept cards against the bot's kept cards (3-handed: against both bots, summed), averaged over both players' draws and every turn and river — everything left to chance once both of you have discarded. <strong>GTO EV</strong>: what your dealt cards were worth with the solver's best draw against the equilibrium range — how good your starting hands were. <strong>GTO post-discard EV</strong>: the same as post-discard EV, but with the solver's best keep in place of yours (if you were out of position and that keep announces a different count, the bot answers it the solver's way); when you make the GTO keep, the two lines match. <strong>EV lost</strong>: the best draw's EV minus the EV of the draw you chose (always ≤ 0) — what your drawing decisions cost against the range. The big chart shows running totals; the <strong>Per hand</strong> strips underneath show each hand on its own (bars above the line are gains, below are losses, all on one shared scale). Hover either one to inspect a hand.</p>
       </div>
 
       <!-- solver study panel (practice) -->
@@ -280,8 +287,10 @@
       <!-- drill (also used to replay mistakes) -->
       <div id="tview-drill" class="tview hidden">
         <div class="practice-settings" id="drillSettings">
-          <label>Position <select id="drPos"><option value="random">Random</option><option value="oop">Out of position</option><option value="ip">In position</option></select></label>
-          <label id="drAnnWrap">Bot announces <select id="drAnn"><option value="gto">As GTO would</option><option value="0">Pat</option><option value="1">Draw 1</option><option value="2">Draw 2</option><option value="3">Draw 3</option></select></label>
+          <label>Players <select id="drPlayers"><option value="2">Heads-up</option><option value="3">3-handed</option></select></label>
+          <label>Position <select id="drPos"></select></label>
+          <label id="drAnnWrap"><span id="drAnnLabel">Bot announces</span> <select id="drAnn"><option value="gto">As GTO would</option><option value="0">Pat</option><option value="1">Draw 1</option><option value="2">Draw 2</option><option value="3">Draw 3</option></select></label>
+          <label id="drAnn2Wrap" class="hidden">2nd announces <select id="drAnn2"><option value="gto">As GTO would</option><option value="0">Pat</option><option value="1">Draw 1</option><option value="2">Draw 2</option><option value="3">Draw 3</option></select></label>
           <label>Cards <select id="drSize"><option value="7">7</option><option value="8">8</option><option value="9" selected>9</option><option value="10">10</option></select></label>
           <label>Solver <select id="drDepth"><option value="fast">Fast</option><option value="standard" selected>Standard</option><option value="deep">Deep</option><option value="max">Max</option></select></label>
           <label class="ps-check"><input type="checkbox" id="drClose" /> Close spots only</label>
@@ -328,6 +337,7 @@
           <label>Board A flop <input id="rvA" class="card-input" placeholder="e.g. Kh 9d 4s" /></label>
           <label>Board B flop <input id="rvB" class="card-input" placeholder="e.g. Jc Jd 6h" /></label>
           <button id="rvRandom" class="secondary sm">Random flops</button>
+          <label>Players <select id="rvPlayers"><option value="2">Heads-up</option><option value="3">3-handed</option></select></label>
           <label>Cards <select id="rvSize"><option value="7">7</option><option value="8">8</option><option value="9" selected>9</option><option value="10">10</option></select></label>
           <label>Solver <select id="rvDepth"><option value="fast">Fast</option><option value="standard" selected>Standard</option><option value="deep">Deep</option><option value="max">Max</option></select></label>
           <button id="rvSolve" class="primary sm">Solve</button>
@@ -346,6 +356,7 @@
 <script src="/lib/game.js"></script>
 <script src="/lib/fasteval.js"></script>
 <script src="/lib/solver.js"></script>
+<script src="/lib/solver3.js"></script>
 <script src="solver-pool.js"></script>
 <script src="client.js"></script>
 <script src="trainer.js"></script>

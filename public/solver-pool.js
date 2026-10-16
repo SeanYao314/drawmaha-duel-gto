@@ -159,5 +159,62 @@
     return { summary: S.summaryOf(R, P), observers: obsResults, range: S.rangeSummary(R), preset };
   }
 
-  window.SolverPool = { solveFlop, cancel, workerCount: WORKER_COUNT };
+  // 3-handed: same contract, observers carry seat 0 (1st) / 1 (2nd) / 2 (button).
+  // Resolves to { summary, observers, range, preset, players: 3 }.
+  async function solveFlop3({ flopA, flopB, observers = [], handSize = 9, preset = 'deep', onProgress = () => {} }) {
+    const S3 = window.Solver3;
+    if (pending.size || queue.length) cancel();
+    const gen = ++generation;
+    const check = () => { if (gen !== generation) throw new Error('cancelled'); };
+    const P = S3.presetFor(preset);
+    const H = handSize, M = P.M;
+    const fa = flopA.map(F.toInt), fb = flopB.map(F.toInt);
+    const ctx = S.makeContext(fa, fb, H);
+    const pops = [0, 1, 2].map(() => S.samplePopulation(ctx, M));
+    const base = { flopA: fa, flopB: fb, H };
+    // Fewer, bigger chunks than heads-up: every chunk pre-deals its own opponent fields.
+    const splits = ranges(M, WORKER_COUNT * 2);
+    let done = 0;
+    const SEAT_W = [0.25, 0.35, 0.4];
+    const W = { open: 0.1, round: 0.72 / P.rounds3, obs: 0.18 };
+    const tickFor = (weight, parts) => () => { done += weight / parts; onProgress(Math.min(0.99, done)); };
+    const scoutAll = async (spec, weight) => {
+      const tick = tickFor(weight, splits.length);
+      const parts = await Promise.all(splits.map(([from, to]) => run('scout3', { ...base, from, to, spec, P }).then((r) => { tick(); return r; })));
+      check();
+      return { keeps: concat(Int16Array, parts.map((r) => r.keeps)), evs: concat(Float32Array, parts.map((r) => r.evs)) };
+    };
+
+    // 1. Opening: every hand's best keep per draw count against two made-hand opponents.
+    const st0 = { M, pops };
+    const open = await Promise.all([0, 1, 2].map((seat) => scoutAll(S3.scoutSpec('A', st0, { seat, otherPop: (seat + 1) % 3 }), W.open / 3)));
+    const st = { M, pops, ...S3.openingState(M, open[0], open[1], open[2]) };
+
+    // 2. Fictitious play: 1st, 2nd, button each best-respond in turn, strategies averaged.
+    for (let it = 1; it <= P.rounds3; it++) {
+      const alpha = S3.ALPHAS3[it - 1] || 1 / (it + 1);
+      for (const seat of [0, 1, 2]) {
+        const r = await scoutAll(S3.scoutSpec(seat, st), W.round * SEAT_W[seat]);
+        st['keep' + seat] = r.keeps; st['ev' + seat] = r.evs;
+        S3.stepAll(st['sig' + seat], r.evs, M * S3.BLOCKS[seat], alpha);
+      }
+    }
+
+    // 3. Real hands.
+    const L = ctx.L;
+    const obsSplits = ranges(P.obs, Math.max(1, Math.floor(WORKER_COUNT * 2 / Math.max(1, observers.length))));
+    const tick = tickFor(W.obs, obsSplits.length * Math.max(1, observers.length));
+    const obsResults = await Promise.all(observers.map(async (o) => {
+      const cards = o.cards.map(F.toInt);
+      const opp = S3.opponentSpec(o.seat, st);
+      const chunks = await Promise.all(obsSplits.map(([s0, s1]) => run('observe3', { ...base, cards, seat: o.seat, opp, s0, s1, rawCap: S3.RAW_CAP3 }).then((r) => { tick(); return r; })));
+      const fin = S3.finalizeObserver3(L, o.seat, chunks);
+      return { id: o.id, seat: o.seat, ...fin, similar: S3.similarHandsMix3(L, o.seat, fin, st) };
+    }));
+    check();
+    onProgress(1);
+    return { summary: S3.summary3(st, P, ctx), observers: obsResults, range: S3.rangeSummary3(st), preset, players: 3 };
+  }
+
+  window.SolverPool = { solveFlop, solveFlop3, cancel, workerCount: WORKER_COUNT };
 })();

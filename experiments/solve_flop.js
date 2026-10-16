@@ -6,15 +6,38 @@
 // Prints the flop's equilibrium summary and, for any hand given, its best keeps with EV
 // (in stakes per hand) and equilibrium frequency. Runs single-threaded, so expect it to
 // be a few times slower than the browser.
+//   node experiments/solve_flop.js "Kh 9d 4s" "Jc Jd 6h" --players 3 --button "As Ks 8h 8c 7d 6s 5h 3c 2c"
+//     (3-handed: give any of --first / --second / --button; the button's keeps are shown
+//      after the 1st and 2nd players both pat)
 const S = require('../lib/solver.js');
+const S3 = require('../lib/solver3.js');
 
 const args = process.argv.slice(2);
 if (args.length < 2) {
-  console.log('usage: node experiments/solve_flop.js "<flop A>" "<flop B>" [--oop "<9 cards>"] [--ip "<9 cards>"] [--preset fast|standard|deep|max|ultra]');
+  console.log('usage: node experiments/solve_flop.js "<flop A>" "<flop B>" [--oop "<9 cards>"] [--ip "<9 cards>"] [--preset fast|standard|deep|max|ultra]  (3-handed: --players 3 [--first|--second|--button "<cards>"])');
   process.exit(1);
 }
 const flopA = args[0].split(/\s+/), flopB = args[1].split(/\s+/);
 const opt = (name) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : null; };
+
+if (opt('--players') === '3') {
+  const preset3 = opt('--preset') || 'deep';
+  const obs3 = ['--first', '--second', '--button'].map((f, seat) => (opt(f) ? { id: f.slice(2), seat, cards: opt(f).split(/\s+/) } : null)).filter(Boolean);
+  const r = S3.runAll3({ flopA, flopB, observers: obs3, preset: preset3, log: (m) => console.error('  ' + m) });
+  const pc = (x) => (x * 100).toFixed(0).padStart(3) + '%';
+  const sm = r.summary;
+  console.log(`\nFlops ${flopA.join(' ')} | ${flopB.join(' ')}   (3-handed, ${preset3}: ${sm.M} hands/seat, ${sm.rounds} rounds)`);
+  console.log(`Seat values (stakes/hand): 1st ${sm.values[0].toFixed(3)}  2nd ${sm.values[1].toFixed(3)}  button ${sm.values[2].toFixed(3)}`);
+  console.log(`1st announces:  pat ${pc(sm.draw0[0])}  d1 ${pc(sm.draw0[1])}  d2 ${pc(sm.draw0[2])}  d3 ${pc(sm.draw0[3])}`);
+  sm.draw1Given.forEach((dist, d) => console.log(`2nd after 1st ${d === 0 ? 'pats   ' : 'draws ' + d + ' '}: pat ${pc(dist[0])}  d1 ${pc(dist[1])}  d2 ${pc(dist[2])}  d3 ${pc(dist[3])}`));
+  for (const o of r.observers) {
+    const cards = obs3.find((x) => x.id === o.id).cards, L = S.layout(cards.length), NK = L.NKEEPS;
+    const order = Array.from({ length: NK }, (_, i) => i).sort((a2, b2) => o.ev[b2] - o.ev[a2]);
+    console.log(`\n${o.id.toUpperCase()} ${cards.join(' ')}${o.seat > 0 ? '  — after everyone before pats' : ''}`);
+    for (const ki of order.slice(0, 8)) console.log(`  ${S.keepCards(cards, ki).join(' ').padEnd(15)} ${['pat   ', 'draw 1', 'draw 2', 'draw 3'][L.KEEP_DRAW[ki]]}  EV ${o.ev[ki].toFixed(3).padStart(7)} ±${o.se[ki].toFixed(3)}  plays ${pc(o.freq[ki])}`);
+  }
+  process.exit(0);
+}
 const observers = [];
 if (opt('--oop')) observers.push({ id: 'oop', seat: 'oop', cards: opt('--oop').split(/\s+/) });
 if (opt('--ip')) observers.push({ id: 'ip', seat: 'ip', cards: opt('--ip').split(/\s+/) });

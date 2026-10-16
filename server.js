@@ -12,7 +12,7 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const LIB_DIR = path.join(__dirname, 'lib');
 // Shared rule/evaluator/solver code is UMD and served straight to the browser, so the
 // client scores and solves with exactly the same code as the server.
-const SHARED_LIB = new Set(['poker.js', 'game.js', 'fasteval.js', 'solver.js']);
+const SHARED_LIB = new Set(['poker.js', 'game.js', 'fasteval.js', 'solver.js', 'solver3.js']);
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I ambiguity
 const STAKE_OPTIONS = [1, 5, 10, 25, 50, 100, 200, 500, 1000];
 
@@ -28,10 +28,12 @@ const MIME = {
 /**
  * In-memory room store (rooms vanish on restart — fine for a casual game). Shape:
  * rooms[code] = {
- *   code, stake, handSize (7–10 cards dealt), phase: 'lobby'|'drawing'|'results', hostId, handNumber,
+ *   code, stake, handSize (7–10 cards dealt), maxPlayers (2 = heads-up, 3 = 3-handed),
+ *   phase: 'lobby'|'drawing'|'results', hostId, handNumber,
  *   players: [{ id, token, name, sseRes, connected, hand, keep, drawn }],
- *   buttonId,            // player in position this hand (alternates every hand)
- *   acting: 'oop'|'ip',  // who must draw next while phase === 'drawing'
+ *   buttonIndex,         // index into players of this hand's button (moves one seat a hand)
+ *   order: [ids],        // action order this hand: left of the button first, button last
+ *   actingIndex,         // whose turn it is in `order` while phase === 'drawing'
  *   deck, flopA, flopB, boardA, boardB,
  *   announce: { [playerId]: { discards, draws } },  // public once a player has drawn
  *   cumulative: { [playerId]: dollars }, history: [...], lastResults
@@ -47,8 +49,6 @@ function makeRoomCode() {
   return code;
 }
 
-const oopId = (room) => room.players.find((p) => p.id !== room.buttonId).id;
-const ipId = (room) => room.buttonId;
 const findPlayer = (room, id) => room.players.find((p) => p.id === id);
 
 function publicRoomState(room) {
@@ -60,11 +60,12 @@ function publicRoomState(room) {
     handNumber: room.handNumber,
     stake: room.stake,
     handSize: room.handSize,
+    maxPlayers: room.maxPlayers,
     players: room.players.map((p) => ({ id: p.id, name: p.name, connected: p.connected })),
     cumulative: room.cumulative,
-    oopId: drawing ? oopId(room) : null,
-    ipId: drawing ? ipId(room) : null,
-    acting: room.phase === 'drawing' ? room.acting : null,
+    order: drawing ? room.order : null,
+    buttonId: drawing ? room.order[room.order.length - 1] : null,
+    actingId: room.phase === 'drawing' ? room.order[room.actingIndex] : null,
     flopA: drawing ? room.flopA : null,
     flopB: drawing ? room.flopB : null,
     announce: room.announce,
@@ -92,11 +93,12 @@ function privateHand(p) {
 
 function dealNewHand(room) {
   room.handNumber += 1;
-  // Button alternates every hand; the very first button is random.
-  if (!room.buttonId) room.buttonId = room.players[Math.random() < 0.5 ? 0 : 1].id;
-  else room.buttonId = room.players.find((p) => p.id !== room.buttonId).id;
-  const { deck, flopA, flopB, hands } = G.dealHand(room.players.map((p) => p.id), room.handSize);
-  Object.assign(room, { deck, flopA, flopB, boardA: null, boardB: null, phase: 'drawing', acting: 'oop', announce: {}, lastResults: null });
+  // The button moves one seat every hand; the very first button is random.
+  const n = room.players.length;
+  room.buttonIndex = room.buttonIndex === null ? Math.floor(Math.random() * n) : (room.buttonIndex + 1) % n;
+  const ids = room.players.map((p) => p.id);
+  const { deck, flopA, flopB, hands } = G.dealHand(ids, room.handSize);
+  Object.assign(room, { deck, flopA, flopB, boardA: null, boardB: null, phase: 'drawing', order: G.actionOrder(ids, room.buttonIndex), actingIndex: 0, announce: {}, lastResults: null });
   for (const p of room.players) {
     p.hand = hands[p.id];
     p.keep = null;
@@ -109,9 +111,17 @@ function dealNewHand(room) {
 function finishHand(room) {
   room.boardA = [...room.flopA, ...room.deck.splice(0, 2)];
   room.boardB = [...room.flopB, ...room.deck.splice(0, 2)];
-  const o = findPlayer(room, oopId(room)), i = findPlayer(room, ipId(room));
+  const seated = room.order.map((id) => findPlayer(room, id));
   const finalOf = (p) => [...p.keep, ...p.drawn];
-  const res = G.scoreShowdown(o.id, finalOf(o), i.id, finalOf(i), room.boardA, room.boardB);
+  let res;
+  if (seated.length === 2) {
+    const [o, i] = seated;
+    res = G.scoreShowdown(o.id, finalOf(o), i.id, finalOf(i), room.boardA, room.boardB);
+  } else {
+    const finals = {};
+    for (const p of seated) finals[p.id] = finalOf(p);
+    res = G.scoreTable(room.order, finals, room.boardA, room.boardB);
+  }
   const dollars = {};
   for (const p of room.players) {
     dollars[p.id] = res.units[p.id] * room.stake;
@@ -124,9 +134,9 @@ function finishHand(room) {
     handSize: room.handSize,
     boardA: room.boardA,
     boardB: room.boardB,
-    oopId: o.id,
-    ipId: i.id,
-    players: [o, i].map((p) => ({
+    playerCount: seated.length,
+    order: room.order.slice(),
+    players: seated.map((p) => ({
       id: p.id, name: p.name, kept: p.keep, drawn: p.drawn, final: finalOf(p),
       // Discards are shown at showdown (after the hand they give nothing away, and
       // seeing them is how you learn what the other player was thinking).
@@ -135,12 +145,14 @@ function finishHand(room) {
     })),
     evals: res.evals,
     contests: res.contests,
-    scoop: res.scoop,
+    scoop: res.scoop || null,
+    matchups: res.matchups || null,
     units: res.units,
     dollars,
     cumulative: { ...room.cumulative }
   };
-  room.history.push({ handNumber: room.handNumber, dollars, scoop: res.scoop });
+  const scoops = res.matchups ? res.matchups.filter((m) => m.scoop).map((m) => ({ winner: m.scoop, loser: m.scoop === m.a ? m.b : m.a })) : null;
+  room.history.push({ handNumber: room.handNumber, dollars, scoop: res.scoop || null, scoops });
   if (room.history.length > 50) room.history.shift();
   broadcast(room, 'results', room.lastResults);
   broadcastState(room);
@@ -199,11 +211,12 @@ const API_HANDLERS = {
     const name = String(body.name || 'Host').trim().slice(0, 20) || 'Host';
     const stake = STAKE_OPTIONS.includes(Number(body.stake)) ? Number(body.stake) : 100;
     const handSize = G.HAND_SIZES.includes(Number(body.handSize)) ? Number(body.handSize) : G.HAND_SIZE;
+    const maxPlayers = G.PLAYER_COUNTS.includes(Number(body.players)) ? Number(body.players) : 2;
     const host = newPlayer(name);
     const code = makeRoomCode();
     rooms.set(code, {
-      code, stake, handSize, phase: 'lobby', hostId: host.id, handNumber: 0,
-      players: [host], buttonId: null, acting: null,
+      code, stake, handSize, maxPlayers, phase: 'lobby', hostId: host.id, handNumber: 0,
+      players: [host], buttonIndex: null, order: null, actingIndex: 0,
       deck: null, flopA: null, flopB: null, boardA: null, boardB: null,
       announce: {}, cumulative: { [host.id]: 0 }, history: [], lastResults: null
     });
@@ -214,7 +227,7 @@ const API_HANDLERS = {
     const room = rooms.get(String(body.code || '').toUpperCase());
     if (!room) return { ok: false, error: 'Room not found.' };
     if (room.phase !== 'lobby') return { ok: false, error: 'That game has already started.' };
-    if (room.players.length >= 2) return { ok: false, error: 'Room is full — Drawmaha Duel is heads-up only.' };
+    if (room.players.length >= room.maxPlayers) return { ok: false, error: `Room is full — this table seats ${room.maxPlayers}.` };
     const name = String(body.name || 'Player').trim().slice(0, 20) || 'Player';
     const p = newPlayer(name);
     room.players.push(p);
@@ -227,21 +240,20 @@ const API_HANDLERS = {
     const { room, error, player } = authPlayer(body);
     if (error) return { ok: false, error };
     if (player.id !== room.hostId) return { ok: false, error: 'Only the host can start the game.' };
-    if (room.players.length < 2) return { ok: false, error: 'Waiting for an opponent to join.' };
+    if (room.players.length < room.maxPlayers) return { ok: false, error: room.maxPlayers === 2 ? 'Waiting for an opponent to join.' : 'Waiting for all 3 players to join.' };
     if (room.phase !== 'lobby') return { ok: false, error: 'Game already started.' };
     dealNewHand(room);
     return { ok: true };
   },
 
-  // Submit your keep. OOP must act first; the number of cards they draw becomes public
-  // the moment they do, and only then may IP act.
+  // Submit your keep. Players act in order (left of the button first, button last); each
+  // draw count becomes public the moment it's made, and only then may the next act.
   '/api/draw': (body) => {
     const { room, error, player } = authPlayer(body);
     if (error) return { ok: false, error };
     if (room.phase !== 'drawing') return { ok: false, error: 'Not in the draw phase.' };
-    const seat = player.id === oopId(room) ? 'oop' : 'ip';
     if (player.keep) return { ok: false, error: 'You already drew this hand.' };
-    if (seat !== room.acting) return { ok: false, error: 'Wait for the player out of position to announce first.' };
+    if (room.order[room.actingIndex] !== player.id) return { ok: false, error: 'Wait for your turn — the players before you announce first.' };
     const err = G.validateKeep(player.hand, body.keep);
     if (err) return { ok: false, error: err };
     // Keep in dealt order so the hand reads the way the player saw it.
@@ -249,21 +261,18 @@ const API_HANDLERS = {
     player.drawn = room.deck.splice(0, G.drawCount(player.keep.length));
     room.announce[player.id] = { discards: G.discardCount(player.keep.length, room.handSize), draws: player.drawn.length };
     sendTo(player, 'your_hand', privateHand(player));
-    if (seat === 'oop') {
-      room.acting = 'ip';
-      broadcastState(room);
-    } else {
-      finishHand(room);
-    }
+    room.actingIndex += 1;
+    if (room.actingIndex < room.order.length) broadcastState(room);
+    else finishHand(room);
     return { ok: true };
   },
 
-  // Heads-up, so either player may deal the next hand once results are in.
+  // Any player may deal the next hand once results are in.
   '/api/next_hand': (body) => {
     const { room, error } = authPlayer(body);
     if (error) return { ok: false, error };
     if (room.phase !== 'results') return { ok: false, error: 'Not ready for the next hand.' };
-    if (room.players.length < 2) return { ok: false, error: 'Your opponent left.' };
+    if (room.players.length < room.maxPlayers) return { ok: false, error: 'Waiting for players.' };
     dealNewHand(room);
     return { ok: true };
   }

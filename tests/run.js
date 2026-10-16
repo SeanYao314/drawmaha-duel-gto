@@ -175,5 +175,120 @@ test('group game: solved strategies are valid distributions', () => {
   assert.ok(r.summary.exploitability < 0.05, 'exploitability ' + r.summary.exploitability);
 });
 
-console.log(`\n${passed} passed, ${failed} failed`);
-process.exit(failed ? 1 : 0);
+console.log('3-handed');
+const S3 = require('../lib/solver3.js');
+test('action order: left of the button first, button last, rotating', () => {
+  assert.deepStrictEqual(G.actionOrder(['a', 'b', 'c'], 0), ['b', 'c', 'a']);
+  assert.deepStrictEqual(G.actionOrder(['a', 'b', 'c'], 2), ['a', 'b', 'c']);
+  assert.deepStrictEqual(G.actionOrder(['a', 'b'], 1), ['a', 'b']);
+});
+test('3-handed with 10 cards each fits the deck (worst case 49 cards)', () => {
+  const d = G.dealHand(['a', 'b', 'c'], 10);
+  assert.strictEqual(d.deck.length, 52 - 6 - 30);
+  assert.ok(d.deck.length >= 4 + 9, 'enough for every draw plus turns and rivers');
+});
+test('scoreTable: each matchup equals the head-up showdown, totals sum to zero', () => {
+  for (let i = 0; i < 300; i++) {
+    const d = P.shuffle(P.freshDeck());
+    const fin = { a: d.slice(0, 5), b: d.slice(5, 10), c: d.slice(10, 15) };
+    const bA = d.slice(15, 20), bB = d.slice(20, 25);
+    const t = G.scoreTable(['a', 'b', 'c'], fin, bA, bB);
+    assert.strictEqual(t.matchups.length, 3);
+    for (const m of t.matchups) {
+      const hu = G.scoreShowdown(m.a, fin[m.a], m.b, fin[m.b], bA, bB);
+      assert.deepStrictEqual(m.units, hu.units);
+      assert.strictEqual(m.scoop, hu.scoop);
+    }
+    assert.strictEqual(t.units.a + t.units.b + t.units.c, 0);
+    for (const c of t.contests) for (const id of ['a', 'b', 'c']) assert.ok(c.places[id] >= 1 && c.places[id] <= 3);
+  }
+});
+test('multi-opponent post-discard EV with one opponent matches the heads-up one', () => {
+  const args = { meKeep: cards('As Ad Kc'), meDraw: 2, flopA: cards('2c 7d 3h'), flopB: cards('4c 8d 2h'), samples: 3000, seed: 42 };
+  const dead = [...args.flopA, ...args.flopB, ...args.meKeep, 'Qs', 'Qh', 'Jd'];
+  const a = S.keepEquityVs({ ...args, oppKeep: cards('Qs Qh Jd'), oppDraw: 2, dead });
+  const b = S3.keepEquityMulti({ ...args, opps: [{ keep: cards('Qs Qh Jd'), draw: 2 }], dead });
+  assert.strictEqual(a, b);
+});
+test('a tiny 3-handed solve: valid strategies for every seat and context', () => {
+  const hand = cards('As Ks Qs Js Ts 5d 6h 9c 9d');
+  const res = S3.runAll3({
+    flopA: cards('2c 7d 3h'), flopB: cards('4c 8d 2h'),
+    observers: [{ id: 'a', seat: 0, cards: hand }, { id: 'b', seat: 1, cards: cards('Kh Kd 8h 8c 5c 4d Th 3s 6c') }, { id: 'c', seat: 2, cards: cards('Ah Ac Jc Tc 9h 7h 6s 5s 4s') }],
+    overrides: { M: 120, R: 64, Q: 4, tA1: 6, tA2: 16, tC1: 6, tC2: 16, k2: 3, obs: 600, rounds3: 2, selfPlay: 4000 }
+  });
+  const NK = S.layout(9).NKEEPS;
+  res.observers.forEach((o, seat) => {
+    assert.strictEqual(o.blocks, [1, 4, 16][seat]);
+    for (let b = 0; b < o.blocks; b++) {
+      const f = o.freq.slice(b * NK, (b + 1) * NK).reduce((x, y) => x + y, 0);
+      assert.ok(Math.abs(f - 1) < 1e-6, `seat ${seat} block ${b} freq sums to ${f}`);
+    }
+  });
+  const sm = res.summary;
+  assert.ok(Math.abs(sm.draw0.reduce((x, y) => x + y, 0) - 1) < 1e-6);
+  for (const row of sm.draw1Given) assert.ok(Math.abs(row.reduce((x, y) => x + y, 0) - 1) < 1e-6);
+  for (const row of sm.draw2Given) assert.ok(Math.abs(row.reduce((x, y) => x + y, 0) - 1) < 1e-6);
+  assert.ok(Math.abs(sm.values[0] + sm.values[1] + sm.values[2]) < 1e-9, 'seat values sum to zero');
+  const a = res.observers[0];
+  const order = [...a.ev.keys()].sort((x, y) => a.ev[y] - a.ev[x]);
+  const royal = order.findIndex((ki) => S.KEEP_DRAW[ki] === 0 && ['As', 'Ks', 'Qs', 'Js', 'Ts'].every((c) => S.keepCards(hand, ki).includes(c)));
+  assert.ok(royal < 3, 'royal pat ranked #' + (royal + 1));
+  assert.strictEqual(res.range.s2.length, 16);
+});
+
+// ---------- live 3-player room over HTTP ----------
+async function roomTest() {
+  const { server } = require('../server.js');
+  await new Promise((r) => server.listen(0, r));
+  const port = server.address().port;
+  const post = (path, body) => new Promise((resolve, reject) => {
+    const data = JSON.stringify(body);
+    const req = require('http').request({ port, path, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) } }, (res) => {
+      let b = ''; res.on('data', (c) => { b += c; }); res.on('end', () => resolve(JSON.parse(b)));
+    });
+    req.on('error', reject); req.end(data);
+  });
+  const { rooms } = require('../server.js');
+  try {
+    const h = await post('/api/create_room', { name: 'A', players: 3 });
+    const b = await post('/api/join_room', { code: h.code, name: 'B' });
+    const early = await post('/api/start_game', { code: h.code, playerId: h.playerId, token: h.token });
+    assert.ok(!early.ok, 'cannot start with 2 of 3');
+    const c = await post('/api/join_room', { code: h.code, name: 'C' });
+    const d = await post('/api/join_room', { code: h.code, name: 'D' });
+    assert.ok(!d.ok && /seats 3/.test(d.error), 'fourth player turned away');
+    assert.ok((await post('/api/start_game', { code: h.code, playerId: h.playerId, token: h.token })).ok);
+    const who = { [h.playerId]: h, [b.playerId]: b, [c.playerId]: c };
+    const room = rooms.get(h.code);
+    const buttons = [];
+    for (let hand = 0; hand < 3; hand++) {
+      buttons.push(room.order[2]);
+      // the button can't jump the queue
+      const btn = who[room.order[2]];
+      const jump = await post('/api/draw', { code: h.code, playerId: btn.playerId, token: btn.token, keep: room.players.find((p) => p.id === btn.playerId).hand.slice(0, 5) });
+      assert.ok(!jump.ok, 'out-of-turn draw refused');
+      for (const id of room.order.slice()) {
+        const pl = room.players.find((p) => p.id === id);
+        const r = await post('/api/draw', { code: h.code, playerId: id, token: who[id].token, keep: pl.hand.slice(0, 3) });
+        assert.ok(r.ok, r.error);
+      }
+      assert.strictEqual(room.phase, 'results');
+      const u = room.lastResults.units;
+      assert.strictEqual(Object.values(u).reduce((x, y) => x + y, 0), 0);
+      assert.strictEqual(room.lastResults.matchups.length, 3);
+      await post('/api/next_hand', { code: h.code, playerId: b.playerId, token: b.token });
+    }
+    assert.strictEqual(new Set(buttons).size, 3, 'the button visited every seat');
+    passed++; console.log('  ✓ live 3-player room: seating, turn order, rotating button, zero-sum results');
+  } catch (e) {
+    failed++; console.log('  ✗ live 3-player room\n    ' + (e.stack || e).toString().split('\n').slice(0, 3).join('\n    '));
+  } finally {
+    server.close();
+  }
+}
+
+roomTest().then(() => {
+  console.log(`\n${passed} passed, ${failed} failed`);
+  process.exit(failed ? 1 : 0);
+});

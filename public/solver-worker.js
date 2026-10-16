@@ -1,7 +1,7 @@
-// public/solver-worker.js — runs one phase of lib/solver.js off the main thread.
-// The page keeps a small pool of these (see solver-pool.js) and splits every expensive
-// phase (scouting/refinement, group payoffs, real-hand sampling) across them.
-importScripts('/lib/fasteval.js', '/lib/solver.js');
+// public/solver-worker.js — runs one phase of lib/solver.js (heads-up) or lib/solver3.js
+// (3-handed) off the main thread. The page keeps a small pool of these (see
+// solver-pool.js) and splits every expensive phase across them.
+importScripts('/lib/fasteval.js', '/lib/solver.js', '/lib/solver3.js');
 
 self.onmessage = (e) => {
   const { id, kind, args } = e.data;
@@ -18,6 +18,12 @@ self.onmessage = (e) => {
       result = Solver.solveGroups(args);
     } else if (kind === 'observe') {
       result = Solver.observeRange(ctx, args.cards, args.seat, args.opp, args.s0, args.s1, args.rawCap);
+      transfer = [result.sums.buffer, result.sq.buffer, result.cnt.buffer, result.raw.buffer];
+    } else if (kind === 'scout3') {
+      result = Solver3.scoutRange3(ctx, args.from, args.to, args.spec, args.P);
+      transfer = [result.keeps.buffer, result.evs.buffer];
+    } else if (kind === 'observe3') {
+      result = Solver3.observeRange3(ctx, args.cards, args.seat, args.opp, args.s0, args.s1, args.rawCap);
       transfer = [result.sums.buffer, result.sq.buffer, result.cnt.buffer, result.raw.buffer];
     } else {
       throw new Error('Unknown job ' + kind);

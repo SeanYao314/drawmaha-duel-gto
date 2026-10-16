@@ -228,7 +228,7 @@
 
   el('btnCreate').addEventListener('click', async () => {
     const name = el('createName').value.trim() || 'Host';
-    const res = await api('/api/create_room', { name, stake: Number(el('createStake').value), handSize: Number(el('createHandSize').value) });
+    const res = await api('/api/create_room', { name, stake: Number(el('createStake').value), handSize: Number(el('createHandSize').value), players: Number(el('createPlayers').value) });
     if (!res.ok) return landingError(res.error);
     Object.assign(live, { code: res.code, playerId: res.playerId, token: res.token, room: null, my: null, results: null });
     mode = 'live';
@@ -274,8 +274,11 @@
   function renderLobby(room) {
     el('lobbyCode').textContent = room.code;
     el('shareLink').value = `${location.origin}/?join=${room.code}`;
+    const max = room.maxPlayers || 2;
     el('lobbyCount').textContent = room.players.length;
-    el('lobbyStake').textContent = `${room.handSize || 9}-card Drawmaha · ${money(room.stake, { sign: false })} per contest · ${money(room.stake * 6, { sign: false })} for a scoop`;
+    el('lobbyMax').textContent = max;
+    el('lobbySub').textContent = max === 3 ? 'Send this link to your two opponents.' : 'Send this link to your opponent.';
+    el('lobbyStake').textContent = `${max === 3 ? '3-handed · ' : ''}${room.handSize || 9}-card Drawmaha · ${money(room.stake, { sign: false })} per contest · ${money(room.stake * 6, { sign: false })} for a scoop${max === 3 ? ' (each matchup settles separately)' : ''}`;
     const list = el('lobbyPlayers');
     list.innerHTML = '';
     room.players.forEach((p) => {
@@ -293,9 +296,9 @@
       list.appendChild(li);
     });
     const isHost = room.hostId === live.playerId;
-    toggle('btnStart', isHost && room.players.length === 2);
-    el('lobbyHint').textContent = room.players.length < 2
-      ? 'Waiting for your opponent to join…'
+    toggle('btnStart', isHost && room.players.length === max);
+    el('lobbyHint').textContent = room.players.length < max
+      ? (max === 3 ? `Waiting for ${max - room.players.length} more player${max - room.players.length > 1 ? 's' : ''} to join…` : 'Waiting for your opponent to join…')
       : isHost ? '' : 'Waiting for the host to start the game…';
   }
 
@@ -303,36 +306,53 @@
     const room = live.room;
     if (!room || room.phase === 'lobby') return null;
     const me = room.players.find((p) => p.id === live.playerId);
-    const opp = room.players.find((p) => p.id !== live.playerId);
-    const meSeat = room.oopId === live.playerId ? 'oop' : 'ip';
+    const order = room.order || room.players.map((p) => p.id);
     const results = live.results && live.results.handNumber === room.handNumber ? live.results : null;
     const my = live.my || {};
+    const seats = order.map((id, pos) => {
+      const p = room.players.find((x) => x.id === id) || { name: '?', connected: false };
+      return { id, name: id === me.id ? 'You' : p.name, pos, isMe: id === me.id, connected: p.connected, announce: room.announce[id] || null };
+    });
     return {
       key: `live-${room.code}-${room.handNumber}`,
       mode: 'live',
       handNumber: room.handNumber,
       stake: room.stake,
       handSize: room.handSize || 9,
-      meId: me.id, oppId: opp ? opp.id : null,
-      meName: me.name, oppName: opp ? opp.name : 'Opponent', oppConnected: opp ? opp.connected : false,
-      meSeat, oppSeat: other(meSeat),
+      n: order.length,
+      meId: me.id, meName: me.name, mePos: order.indexOf(me.id),
+      seats, ring: room.players.map((p) => p.id),
       hand: my.hand || [], keep: my.keep || null, drawn: my.drawn || null,
-      myAnnounce: room.announce[me.id] || null,
-      oppAnnounce: opp ? room.announce[opp.id] || null : null,
-      acting: room.acting,
+      actingId: results ? null : room.actingId,
       flopA: room.flopA || [], flopB: room.flopB || [],
       results,
-      cumulative: { me: room.cumulative[me.id] || 0, opp: opp ? room.cumulative[opp.id] || 0 : 0 },
-      history: room.history.map((h) => ({ handNumber: h.handNumber, me: h.dollars[me.id], scoop: h.scoop === me.id ? 'me' : h.scoop ? 'opp' : null }))
+      cumulative: room.cumulative,
+      history: room.history.map((h) => ({
+        handNumber: h.handNumber, me: h.dollars[me.id],
+        scoops: h.scoops || (h.scoop ? [{ winner: h.scoop, loser: order.find((x) => x !== h.scoop) }] : [])
+      }))
     };
   }
 
   // =====================================================================
-  // TABLE RENDERING (shared by live and practice)
+  // TABLE RENDERING (shared by live and practice, heads-up or 3-handed)
   // =====================================================================
+  // A view model (vm) describes one hand from my side:
+  //   n (2 or 3), seats: [{ id, name, pos, isMe, connected, announce }] in action order
+  //   (button last), meId, mePos, hand/keep/drawn (mine), actingId (null once it's over),
+  //   flopA/flopB, results, cumulative { id: dollars }, history.
   const table = { key: null, selected: new Set(), error: null };
   const reveal = { key: null, stage: 0, timer: null, lastStage: 0 };
-  const FINAL_STAGE = 7; // 1 turns · 2 rivers · 3 opp cards · 4-6 contests · 7 totals
+  const FINAL_STAGE = 7; // 1 turns · 2 rivers · 3 opponents' cards · 4-6 contests · 7 totals
+
+  const seatOf = (vm, id) => vm.seats.find((s) => s.id === id);
+  const nameOf = (vm, id) => (id === vm.meId ? 'You' : (seatOf(vm, id) || { name: '?' }).name);
+  const oppSeats = (vm) => vm.seats.filter((s) => !s.isMe);
+  const annLabel = (d) => (d === 0 ? 'pats' : `draws ${d}`);
+  const annPast = (d) => (d === 0 ? 'patted' : `drew ${d}`);
+  // Which solver decision block a seat is in, given the draw counts it heard (in action
+  // order): 0 for the first player, d0 for the 2nd, d0*4 + d1 for the 3-handed button.
+  const blockOf = (anns) => anns.reduce((b, d) => b * 4 + d, 0);
 
   function currentVM() {
     if (mode === 'train') return null;
@@ -352,8 +372,10 @@
     }
     el('handNumber').textContent = vm.handNumber;
     toggle('modeTag', vm.mode === 'practice');
-    el('sizeTag').textContent = `${vm.handSize}-CARD`;
-    toggle('sizeTag', vm.handSize !== 9);
+    el('modeTag').textContent = vm.n === 3 ? 'PRACTICE vs 2 BOTS' : 'PRACTICE vs BOT';
+    const tags = [vm.n === 3 ? '3-HANDED' : null, vm.handSize !== 9 ? `${vm.handSize}-CARD` : null].filter(Boolean);
+    el('sizeTag').textContent = tags.join(' · ');
+    toggle('sizeTag', tags.length > 0);
     toggle('practiceSettings', vm.mode === 'practice');
     toggle('btnPracticeBack', vm.mode === 'practice');
     if (vm.mode === 'practice') hide('roomBadge');
@@ -364,7 +386,7 @@
 
     renderScoreStrip(vm);
     renderPositionBanner(vm);
-    renderOpp(vm, stage);
+    renderOpps(vm, stage);
     renderBoards(vm, stage);
     renderMe(vm);
     renderResults(vm, stage);
@@ -374,63 +396,87 @@
   }
 
   function renderScoreStrip(vm) {
-    el('scoreStrip').innerHTML = `
-      <span class="score-pill">You <span class="amt ${cls(vm.cumulative.me)}">${money(vm.cumulative.me)}</span></span>
-      <span class="score-pill">${esc(vm.oppName)} <span class="amt ${cls(vm.cumulative.opp)}">${money(vm.cumulative.opp)}</span></span>
-      <span class="score-pill" style="font-weight:600;color:var(--muted)">${money(vm.stake, { sign: false })} per contest · scoop ${money(vm.stake * 6, { sign: false })}</span>`;
+    // Fixed seat order (you first, then clockwise), so the pills don't shuffle as the button moves.
+    const ring = vm.ring || vm.seats.map((s) => s.id);
+    const at = ring.indexOf(vm.meId);
+    const order = ring.map((_, i) => seatOf(vm, ring[(at + i) % ring.length])).filter(Boolean);
+    el('scoreStrip').innerHTML = order.map((s) => `<span class="score-pill">${s.isMe ? 'You' : esc(s.name)} <span class="amt ${cls(vm.cumulative[s.id] || 0)}">${money(vm.cumulative[s.id] || 0)}</span></span>`).join('') +
+      `<span class="score-pill" style="font-weight:600;color:var(--muted)">${money(vm.stake, { sign: false })} per contest · scoop ${money(vm.stake * 6, { sign: false })}${vm.n === 3 ? ' · each matchup' : ''}</span>`;
   }
 
-  function posChip(id, seat, acting) {
-    const c = el(id);
-    c.innerHTML = seat === 'ip' ? '<span class="dealer-btn" title="Dealer button">D</span> In position' : 'Out of position · acts first';
-    c.className = 'pos-chip ' + seat + (acting ? ' acting' : '');
+  // Seat colours: blue = acts first, teal = 2nd of three, gold = button (acts last).
+  const posClass = (n, pos) => (pos === n - 1 ? 'ip' : pos === 0 ? 'oop' : 'mid');
+  function posChipHTML(n, pos) {
+    if (n === 2) return pos === 1 ? '<span class="dealer-btn" title="Dealer button">D</span> In position' : 'Out of position · acts first';
+    return pos === 2 ? '<span class="dealer-btn" title="Dealer button">D</span> Button · acts last' : pos === 0 ? '1st to act' : '2nd to act';
+  }
+  function setPosChip(node, n, pos, acting) {
+    node.innerHTML = posChipHTML(n, pos);
+    node.className = 'pos-chip ' + posClass(n, pos) + (acting ? ' acting' : '');
+  }
+  // Big reminder of where you sit. nm[p] = name of whoever sits at position p.
+  function positionBannerHTML(n, pos, nm) {
+    if (n === 2) {
+      return pos === 1
+        ? `<span class="pb-icon"><span class="dealer-btn big">D</span></span><span><strong>You're IN POSITION</strong> — you have the button. ${esc(nm[0])} draws first and announces how many; then you decide.</span>`
+        : `<span class="pb-icon">⬆</span><span><strong>You're OUT OF POSITION</strong> — you act first. Your draw count is announced before ${esc(nm[1])} decides.</span>`;
+    }
+    if (pos === 0) return `<span class="pb-icon">⬆</span><span><strong>You're 1ST TO ACT</strong> — left of the button. Your draw count is announced before ${esc(nm[1])} and ${esc(nm[2])} decide.</span>`;
+    if (pos === 1) return `<span class="pb-icon pb-num">2</span><span><strong>You're 2ND TO ACT</strong> — you hear ${esc(nm[0])}'s draw count first; yours is announced before ${esc(nm[2])} (the button) decides.</span>`;
+    return `<span class="pb-icon"><span class="dealer-btn big">D</span></span><span><strong>You're on the BUTTON</strong> — you act last, after hearing both ${esc(nm[0])}'s and ${esc(nm[1])}'s draw counts.</span>`;
   }
 
-  // Big, color-coded reminder of where you sit this hand (gold = in position / button,
-  // blue = out of position). It pulses once whenever a new hand is dealt.
+  // It pulses once whenever a new hand is dealt.
   let lastBannerKey = null;
   function renderPositionBanner(vm) {
     const b = el('posBanner');
-    const ip = vm.meSeat === 'ip';
-    b.className = 'pos-banner ' + (ip ? 'ip' : 'oop');
-    b.innerHTML = ip
-      ? `<span class="pb-icon"><span class="dealer-btn big">D</span></span><span><strong>You're IN POSITION</strong> — you have the button. ${esc(vm.oppName)} draws first and announces how many; then you decide.</span>`
-      : `<span class="pb-icon">⬆</span><span><strong>You're OUT OF POSITION</strong> — you act first. Your draw count is announced before ${esc(vm.oppName)} decides.</span>`;
+    const pc = posClass(vm.n, vm.mePos);
+    b.className = 'pos-banner ' + pc;
+    b.innerHTML = positionBannerHTML(vm.n, vm.mePos, vm.seats.map((s) => s.name));
     if (vm.key !== lastBannerKey) {
       lastBannerKey = vm.key;
       b.classList.remove('flash'); void b.offsetWidth; b.classList.add('flash');
     }
-    el('meSeat').classList.toggle('seat-ip', ip);
-    el('meSeat').classList.toggle('seat-oop', !ip);
+    ['ip', 'oop', 'mid'].forEach((c) => el('meSeat').classList.toggle('seat-' + c, c === pc));
   }
 
-  function renderOpp(vm, stage) {
-    el('oppName').textContent = vm.oppName + (vm.mode === 'live' && !vm.oppConnected ? ' (offline)' : '');
-    const acting = !vm.results && vm.acting === vm.oppSeat;
-    posChip('oppPos', vm.oppSeat, acting);
-    const status = el('oppStatus');
-    status.className = 'seat-status';
-    if (vm.oppAnnounce) {
-      status.textContent = vm.oppAnnounce.draws === 0 ? `Discarded ${vm.oppAnnounce.discards} — pat` : `Discarded ${vm.oppAnnounce.discards} — drawing ${vm.oppAnnounce.draws}`;
-      status.classList.add('announce');
-    } else if (acting) {
-      status.textContent = vm.mode === 'practice' ? (vm.botThinking || 'Thinking…') : 'Choosing a keep…';
-    } else {
-      status.textContent = 'Waiting for you';
-    }
-    const box = el('oppCards');
-    box.innerHTML = '';
-    if (vm.results && stage >= 3) {
-      const p = vm.results.players.find((x) => x.id === vm.oppId);
-      p.final.forEach((c) => {
-        const node = cardEl(c, { extra: 'static' + (p.drawn.includes(c) ? ' drawn' : '') });
-        if (reveal.lastStage < 3) node.classList.add('card-reveal');
-        box.appendChild(node);
-      });
-      if (p.discarded && p.discarded.length) box.appendChild(discardGroup(p.discarded, reveal.lastStage < 3));
-    } else {
-      const n = vm.oppAnnounce ? 5 : vm.handSize;
-      for (let i = 0; i < n; i++) box.appendChild(backEl());
+  function renderOpps(vm, stage) {
+    const host = el('oppSeats');
+    const opps = oppSeats(vm);
+    const compact = opps.length > 1;
+    host.className = 'opp-seats' + (compact ? ' two' : '');
+    host.innerHTML = '';
+    for (const s of opps) {
+      const seat = document.createElement('div');
+      seat.className = 'seat seat-opp';
+      seat.dataset.seatId = s.id;
+      seat.innerHTML = '<div class="seat-head"><span class="seat-name"></span><span class="pos-chip"></span><span class="seat-status"></span></div><div class="seat-cards"></div>';
+      seat.querySelector('.seat-name').textContent = s.name + (vm.mode === 'live' && !s.connected ? ' (offline)' : '');
+      const acting = !vm.results && vm.actingId === s.id;
+      setPosChip(seat.querySelector('.pos-chip'), vm.n, s.pos, acting);
+      const status = seat.querySelector('.seat-status');
+      if (s.announce) {
+        status.textContent = s.announce.draws === 0 ? `Discarded ${s.announce.discards} — pat` : `Discarded ${s.announce.discards} — drawing ${s.announce.draws}`;
+        status.classList.add('announce');
+      } else if (acting) {
+        status.textContent = vm.mode === 'practice' ? ((vm.botThinking && vm.botThinking[s.id]) || 'Thinking…') : 'Choosing a keep…';
+      } else {
+        status.textContent = vm.actingId === vm.meId ? 'Waiting for you' : 'Waiting to act';
+      }
+      const box = seat.querySelector('.seat-cards');
+      if (vm.results && stage >= 3) {
+        const p = vm.results.players.find((x) => x.id === s.id);
+        p.final.forEach((c) => {
+          const node = cardEl(c, { small: compact, extra: 'static' + (p.drawn.includes(c) ? ' drawn' : '') });
+          if (reveal.lastStage < 3) node.classList.add('card-reveal');
+          box.appendChild(node);
+        });
+        if (p.discarded && p.discarded.length) box.appendChild(discardGroup(p.discarded, reveal.lastStage < 3));
+      } else {
+        const nCards = s.announce ? 5 : vm.handSize;
+        for (let i = 0; i < nCards; i++) box.appendChild(backEl(compact));
+      }
+      host.appendChild(seat);
     }
   }
 
@@ -455,8 +501,8 @@
 
   function renderMe(vm) {
     el('meName').textContent = vm.mode === 'practice' ? 'You' : `${vm.meName} (you)`;
-    const myTurn = !vm.results && vm.acting === vm.meSeat && !vm.keep;
-    posChip('mePos', vm.meSeat, myTurn);
+    const myTurn = !vm.results && vm.actingId === vm.meId && !vm.keep;
+    setPosChip(el('mePos'), vm.n, vm.mePos, myTurn);
     const box = el('meCards');
     box.innerHTML = '';
     const status = el('meStatus');
@@ -475,7 +521,7 @@
       if (vm.grade) { gb.className = `grade-badge g-${vm.grade.key}`; gb.textContent = (vm.grade.key === 'gto' ? '✓ ' : '') + vm.grade.label; }
       else if (vm.mode === 'practice') { gb.className = 'grade-badge g-pending'; gb.textContent = 'Grading…'; }
       else gb.className = 'grade-badge hidden';
-      el('keepHint').textContent = vm.results ? '' : (vm.acting === vm.oppSeat ? `Waiting for ${vm.oppName} to draw…` : '');
+      el('keepHint').textContent = !vm.results && vm.actingId ? `Waiting for ${nameOf(vm, vm.actingId)} to draw…` : '';
       hide('drawActions');
       return;
     }
@@ -510,22 +556,19 @@
     const minDisc = vm.hand.length - G.MAX_KEEP, maxDisc = vm.hand.length - G.MIN_KEEP;
     const legal = k >= G.MIN_KEEP && k <= G.MAX_KEEP;
     const btn = el('btnDraw');
-    if (myTurn) {
-      status.textContent = vm.meSeat === 'oop' ? 'Your turn — you act first' : 'Your turn';
-    } else {
-      status.textContent = '';
-    }
+    status.textContent = myTurn ? (vm.mePos === 0 ? 'Your turn — you act first' : 'Your turn') : '';
     let hint;
     if (nDisc === 0) hint = `Click the cards you want to discard (${minDisc}–${maxDisc}). Whatever you don't mark is your hand.`;
     else if (k > G.MAX_KEEP) hint = `Discarding ${nDisc} — discard at least ${minDisc} (you can keep at most 5).`;
     else if (k < G.MIN_KEEP) hint = `Discarding ${nDisc} — discard at most ${maxDisc} (you must keep at least 2).`;
     else hint = `Discarding ${nDisc}, keeping ${k} → ${k === 5 ? 'pat (draw nothing)' : 'draw ' + (5 - k)}.`;
-    if (!myTurn && vm.meSeat === 'ip' && !vm.oppAnnounce) {
-      hint += ` ${vm.oppName} is out of position and announces first — you can line up your discards meanwhile.`;
+    const before = vm.seats.slice(0, vm.mePos);
+    const notYet = before.filter((s) => !s.announce);
+    if (!myTurn && !vm.results && notYet.length) {
+      hint += ` ${notYet.map((s) => s.name).join(' and ')} ${notYet.length > 1 ? 'announce' : 'announces'} first — you can line up your discards meanwhile.`;
     }
-    if (myTurn && vm.meSeat === 'ip' && vm.oppAnnounce) {
-      hint = `${vm.oppName} ${announceText(vm.oppAnnounce)}. ` + hint;
-    }
+    const heard = before.filter((s) => s.announce);
+    if (myTurn && heard.length) hint = heard.map((s) => `${s.name} ${announceText(s.announce)}`).join('; ') + '. ' + hint;
     el('keepHint').textContent = hint;
     btn.disabled = !(myTurn && legal);
     btn.textContent = !legal ? `Mark ${minDisc}–${maxDisc} cards to discard`
@@ -573,7 +616,8 @@
     if (!vm || !vm.results) return;
     const r = vm.results;
     const mine = r.dollars[vm.meId];
-    if (r.scoop === vm.meId) playScoopSound();
+    const iScooped = r.matchups ? r.matchups.some((m) => m.scoop === vm.meId) : r.scoop === vm.meId;
+    if (iScooped) playScoopSound();
     else if (mine > 0) playWinSound();
   }
   el('btnSkipReveal').addEventListener('click', () => {
@@ -583,21 +627,34 @@
     finishReveal();
   });
 
+  // Scoops as plain sentences, from my side. scoops: [{ winner, loser }].
+  function scoopSentences(vm, scoops) {
+    return (scoops || []).map(({ winner, loser }) => winner === vm.meId ? `you scooped ${nameOf(vm, loser)}`
+      : loser === vm.meId ? `${nameOf(vm, winner)} scooped you` : `${nameOf(vm, winner)} scooped ${nameOf(vm, loser)}`);
+  }
+
   function renderResults(vm, stage) {
     toggle('resultsBlock', !!vm.results);
     if (!vm.results) return;
-    const r = vm.results;
     const statusText = ['Dealing the turns…', 'Dealing the turns…', 'Dealing the rivers…', 'Showdown…', 'Showdown…', 'Showdown…', 'Showdown…'];
     if (stage < FINAL_STAGE) { el('revealStatus').textContent = statusText[stage]; show('revealStatus'); } else hide('revealStatus');
+    if (vm.n === 3) renderResults3(vm, stage); else renderResults2(vm, stage);
+    toggle('btnNextHand', stage >= FINAL_STAGE);
+  }
 
-    const me = r.players.find((p) => p.id === vm.meId), opp = r.players.find((p) => p.id === vm.oppId);
+  function renderResults2(vm, stage) {
+    const r = vm.results;
+    const oppSeat = oppSeats(vm)[0];
+    const oppId = oppSeat.id, oppName = oppSeat.name;
+    hide('matchupList');
+    const me = r.players.find((p) => p.id === vm.meId), opp = r.players.find((p) => p.id === oppId);
     const tbl = el('contestTable');
-    const oppLabel = esc(vm.oppName);
+    const oppLabel = esc(oppName);
     let html = `<tr><th>Contest</th><th>You</th><th>${oppLabel}</th><th>Result</th></tr>`;
     r.contests.forEach((c, i) => {
       const shown = stage >= 4 + i;
-      const myEval = r.evals[vm.meId][c.key], opEval = r.evals[vm.oppId][c.key];
-      const res = c.winner === vm.meId ? 1 : c.winner === vm.oppId ? -1 : 0;
+      const myEval = r.evals[vm.meId][c.key], opEval = r.evals[oppId][c.key];
+      const res = c.winner === vm.meId ? 1 : c.winner === oppId ? -1 : 0;
       html += `<tr class="${shown ? (reveal.lastStage < 4 + i ? 'shown' : '') : 'pending'}" data-i="${i}">
         <td class="c-label">${esc(c.label)}</td>
         <td class="c-hand ${shown && res > 0 ? 'win' : ''}" data-who="me" data-name="You"><span class="cat">${shown ? esc(myEval.category) : '—'}</span></td>
@@ -622,7 +679,7 @@
       const wasHidden = banner.classList.contains('hidden');
       banner.textContent = r.scoop === vm.meId
         ? `🧹 SCOOP! You won all three contests — double money: ${money(mine)}`
-        : `🧹 ${vm.oppName} scooped all three contests — double money: ${money(mine)}`;
+        : `🧹 ${oppName} scooped all three contests — double money: ${money(mine)}`;
       show('scoopBanner');
       if (wasHidden) { banner.classList.remove('reveal'); void banner.offsetWidth; banner.classList.add('reveal'); }
     } else hide('scoopBanner');
@@ -631,8 +688,66 @@
       ? (mine === 0 ? '<span class="even">Even hand — no money changes hands.</span>'
         : `This hand: <span class="${cls(mine)}">${money(mine)}</span> <span class="hint-inline" style="color:var(--muted)">(${units(r.units[vm.meId])} stakes)</span>`)
       : '';
-    toggle('btnNextHand', stage >= FINAL_STAGE);
-    el('btnNextHand').textContent = vm.mode === 'practice' ? 'Deal Next Hand' : 'Deal Next Hand';
+  }
+
+  // 3-handed: one table with everyone's hand per contest (places 1st–3rd), then the three
+  // head-up matchups those places decide.
+  function renderResults3(vm, stage) {
+    const r = vm.results;
+    const cols = [seatOf(vm, vm.meId), ...oppSeats(vm)];
+    const PLACE = ['', '1st', '2nd', '3rd'];
+    const tbl = el('contestTable');
+    let html = `<tr><th>Contest</th>${cols.map((s) => `<th>${s.isMe ? 'You' : esc(s.name)}</th>`).join('')}</tr>`;
+    r.contests.forEach((c, i) => {
+      const shown = stage >= 4 + i;
+      html += `<tr class="three ${shown ? (reveal.lastStage < 4 + i ? 'shown' : '') : 'pending'}" data-i="${i}"><td class="c-label">${esc(c.label)}</td>` +
+        cols.map((s, ci) => {
+          const pl = c.places[s.id];
+          return `<td class="c-hand ${shown && pl === 1 ? 'win' : ''}" data-who="p${ci}" data-name="${s.isMe ? 'You' : esc(s.name)}"><span class="cat">${shown ? `<span class="place p${pl}">${PLACE[pl]}</span> ${esc(r.evals[s.id][c.key].category)}` : '—'}</span></td>`;
+        }).join('') + '</tr>';
+    });
+    tbl.innerHTML = html;
+    r.contests.forEach((c, i) => {
+      if (stage < 4 + i) return;
+      const row = tbl.querySelector(`tr[data-i="${i}"]`);
+      cols.forEach((s, ci) => {
+        const p = r.players.find((x) => x.id === s.id);
+        const ev = r.evals[s.id][c.key];
+        const hole = c.key === 'five' ? [] : ev.cards.filter((x) => p.final.includes(x));
+        row.querySelector(`td[data-who="p${ci}"]`).appendChild(miniCards(ev.cards, { highlight: hole }));
+      });
+    });
+
+    // The three matchups (mine first), each settled on its own.
+    const list = el('matchupList');
+    if (stage >= FINAL_STAGE) {
+      const mine = r.matchups.filter((m) => m.a === vm.meId || m.b === vm.meId).concat(r.matchups.filter((m) => m.a !== vm.meId && m.b !== vm.meId));
+      list.innerHTML = '<div class="mu-title">Matchups</div>' + mine.map((m) => {
+        const left = m.b === vm.meId ? m.b : m.a, right = left === m.a ? m.b : m.a;
+        const net = m.units[left] * vm.stake;
+        const marks = m.winners.map((w, i) => `<span class="mu-c ${w === left ? 'w' : w === right ? 'l' : 'p'}" title="${esc(G.CONTESTS[i].label)}">${['5', 'A', 'B'][i]}${w === left ? '✓' : w === right ? '✗' : '='}</span>`).join('');
+        const scoop = m.scoop ? `<span class="mu-scoop">🧹 ${m.scoop === vm.meId ? 'you scooped' : esc(nameOf(vm, m.scoop)) + ' scooped'}</span>` : '';
+        const mineRow = left === vm.meId;
+        return `<div class="mu-row${mineRow ? ' mine' : ''}"><span class="mu-names">${esc(nameOf(vm, left))} vs ${esc(nameOf(vm, right))}</span><span class="mu-marks">${marks}</span>${scoop}<span class="mu-net ${mineRow ? cls(net) : ''}">${mineRow ? (net === 0 ? 'Even' : money(net)) : net === 0 ? 'Even' : `${esc(nameOf(vm, net > 0 ? left : right))} wins ${money(Math.abs(net), { sign: false })}`}</span></div>`;
+      }).join('');
+      show('matchupList');
+    } else hide('matchupList');
+
+    const mine = r.dollars[vm.meId];
+    const banner = el('scoopBanner');
+    const scoops = r.matchups.filter((m) => m.scoop).map((m) => ({ winner: m.scoop, loser: m.scoop === m.a ? m.b : m.a }));
+    if (stage >= FINAL_STAGE && scoops.length) {
+      const wasHidden = banner.classList.contains('hidden');
+      const lines = scoopSentences(vm, scoops);
+      banner.textContent = `🧹 SCOOP${scoops.length > 1 ? 'S' : ''}! ${lines.map((x) => x[0].toUpperCase() + x.slice(1)).join(' · ')} — double money in that matchup.`;
+      show('scoopBanner');
+      if (wasHidden) { banner.classList.remove('reveal'); void banner.offsetWidth; banner.classList.add('reveal'); }
+    } else hide('scoopBanner');
+
+    el('handTotal').innerHTML = stage >= FINAL_STAGE
+      ? (mine === 0 ? '<span class="even">Even hand overall — your two matchups cancel out.</span>'
+        : `This hand: <span class="${cls(mine)}">${money(mine)}</span> <span class="hint-inline" style="color:var(--muted)">(${units(r.units[vm.meId])} stakes, both matchups)</span>`)
+      : '';
   }
 
   el('btnNextHand').addEventListener('click', async () => {
@@ -646,14 +761,16 @@
   function renderHistory(vm) {
     const items = (vm.history || []).slice().reverse();
     el('historyList').innerHTML = items.length
-      ? items.map((h) => `Hand #${h.handNumber}: <span class="${cls(h.me)}">${money(h.me)}</span>${h.scoop ? (h.scoop === 'me' ? ' — 🧹 you scooped' : ` — 🧹 ${esc(vm.oppName)} scooped`) : ''}`).join('<br>')
+      ? items.map((h) => `Hand #${h.handNumber}: <span class="${cls(h.me)}">${money(h.me)}</span>${h.scoops && h.scoops.length ? ' — 🧹 ' + esc(scoopSentences(vm, h.scoops).join(', ')) : ''}`).join('<br>')
       : '<span class="hint">No hands finished yet.</span>';
   }
 
   // =====================================================================
-  // PRACTICE MODE (vs the solver bot, entirely client-side)
+  // PRACTICE MODE (vs one solver bot heads-up, or two bots 3-handed; all client-side)
   // =====================================================================
   const BOT_NAME = 'GTO Bot';
+  const BOT_NAMES = { bot: 'GTO Bot', bot1: 'Bot 1', bot2: 'Bot 2' };
+  const playerName = (id) => (id === 'me' ? 'You' : BOT_NAMES[id]);
   let practice = null;
 
   el('btnPracticeStart').addEventListener('click', () => {
@@ -661,10 +778,14 @@
     mode = 'practice';
     const preset = (document.querySelector('input[name="depth"]:checked') || {}).value || 'deep';
     const handSize = Number(el('practiceHandSize').value) || 9;
-    savePracticePrefs({ preset, handSize, stake: Number(el('practiceStake').value) });
+    const players = Number(el('practicePlayers').value) === 3 ? 3 : 2;
+    savePracticePrefs({ preset, handSize, stake: Number(el('practiceStake').value), players });
+    // Seats around the table; the button moves one seat per hand (first button random).
+    const ring = players === 3 ? ['me', 'bot1', 'bot2'] : ['me', 'bot'];
     practice = {
-      stake: Number(el('practiceStake').value), preset, handSize, handNumber: 0,
-      cumulative: { me: 0, bot: 0 }, history: [], stats: [], firstSeat: Math.random() < 0.5 ? 'oop' : 'ip', hand: null
+      stake: Number(el('practiceStake').value), preset, handSize, players, ring, handNumber: 0,
+      buttonIndex: Math.floor(Math.random() * players),
+      cumulative: Object.fromEntries(ring.map((id) => [id, 0])), history: [], stats: [], hand: null
     };
     el('psHandSize').value = String(handSize);
     el('psDepth').value = preset;
@@ -672,7 +793,7 @@
     dealPractice();
   });
 
-  // Practice preferences (hand size, solver depth, stake) persist between visits.
+  // Practice preferences (players, hand size, solver depth, stake) persist between visits.
   const PRACTICE_PREFS_KEY = 'drawmaha-duel-practice-prefs';
   function savePracticePrefs(p) {
     try { localStorage.setItem(PRACTICE_PREFS_KEY, JSON.stringify(p)); } catch (e) { /* ignore */ }
@@ -684,17 +805,19 @@
       const r = document.querySelector(`input[name="depth"][value="${p.preset}"]`);
       if (r) r.checked = true;
       if (STAKES.includes(p.stake)) el('practiceStake').value = String(p.stake);
+      if (p.players === 3) el('practicePlayers').value = '3';
     }
   } catch (e) { /* ignore */ }
+  const prefsNow = () => ({ preset: practice.preset, handSize: practice.handSize, stake: practice.stake, players: practice.players });
   el('psHandSize').addEventListener('change', () => {
     if (!practice) return;
     practice.handSize = Number(el('psHandSize').value);
-    savePracticePrefs({ preset: practice.preset, handSize: practice.handSize, stake: practice.stake });
+    savePracticePrefs(prefsNow());
   });
   el('psDepth').addEventListener('change', () => {
     if (!practice) return;
     practice.preset = el('psDepth').value;
-    savePracticePrefs({ preset: practice.preset, handSize: practice.handSize, stake: practice.stake });
+    savePracticePrefs(prefsNow());
   });
   el('btnPracticeBack').addEventListener('click', () => {
     window.SolverPool.cancel();
@@ -704,24 +827,33 @@
     showScreen('landing');
   });
 
+  // The draw counts the player at `pos` heard (everyone before them in the action order).
+  const handAnns = (h, pos) => h.order.slice(0, pos).map((id) => h.drawn[id].length);
+  // Solver seat for an observer: 'oop' / 'ip' heads-up, 0 / 1 / 2 three-handed.
+  const solverSeat = (n, pos) => (n === 2 ? (pos === 0 ? 'oop' : 'ip') : pos);
+  // Seat names stored in the decision log (heads-up keeps the original 'oop' / 'ip').
+  const legacySeat = (n, pos) => (n === 2 ? (pos === 0 ? 'oop' : 'ip') : ['first', 'second', 'button'][pos]);
+
   function dealPractice() {
     window.SolverPool.cancel();
     practice.handNumber += 1;
+    if (practice.handNumber > 1) practice.buttonIndex = (practice.buttonIndex + 1) % practice.players;
     const deck = window.Poker.shuffle(window.Poker.freshDeck());
     const flopA = deck.splice(0, 3), flopB = deck.splice(0, 3);
-    const H = practice.handSize;
-    const mine = deck.splice(0, H), bots = deck.splice(0, H);
-    const mySeat = practice.handNumber % 2 === 1 ? practice.firstSeat : other(practice.firstSeat);
+    const H = practice.handSize, n = practice.players;
+    const cards = {};
+    for (const id of practice.ring) cards[id] = deck.splice(0, H);
+    const order = G.actionOrder(practice.ring, practice.buttonIndex);
     const h = practice.hand = {
-      deck, flopA, flopB, my9: mine, bot9: bots, mySeat, botSeat: other(mySeat),
-      myKeep: null, myDrawn: null, botKeep: null, botDrawn: null, acting: 'oop',
-      results: null, peek: false, studyTab: null, preset: practice.preset,
+      deck, flopA, flopB, n, order, cards, keep: {}, drawn: {}, actingIndex: 0, botKi: {}, botPending: null,
+      results: null, peek: false, studyAnns: null, preset: practice.preset,
       solve: { status: 'running', progress: 0, result: null, error: null, startedAt: performance.now() }
     };
     renderTable();
-    window.SolverPool.solveFlop({
+    const solveFn = n === 3 ? window.SolverPool.solveFlop3 : window.SolverPool.solveFlop;
+    solveFn({
       flopA, flopB, preset: practice.preset, handSize: H,
-      observers: [{ id: 'me', seat: mySeat, cards: mine }, { id: 'bot', seat: h.botSeat, cards: bots }],
+      observers: order.map((id, pos) => ({ id, seat: solverSeat(n, pos), cards: cards[id] })),
       onProgress: (p) => {
         if (practice && practice.hand === h) { h.solve.progress = p; updateProgress(); }
       }
@@ -746,50 +878,55 @@
   function practiceVM() {
     if (!practice || !practice.hand) return null;
     const h = practice.hand;
-    const botAnnounce = h.botKeep ? { discards: G.discardCount(h.botKeep.length, h.bot9.length), draws: h.botDrawn.length } : null;
-    let botThinking = null;
-    if (h.acting === h.botSeat && !h.botKeep) {
-      botThinking = h.solve.status === 'running' ? `Solving the flop… ${Math.round(h.solve.progress * 100)}%` : 'Choosing…';
+    const H = h.cards.me.length;
+    const actingId = h.results ? null : h.order[h.actingIndex] || null;
+    const botThinking = {};
+    if (actingId && actingId !== 'me' && !h.keep[actingId]) {
+      botThinking[actingId] = h.solve.status === 'running' ? `Solving the flop… ${Math.round(h.solve.progress * 100)}%` : 'Choosing…';
     }
     return {
       key: `practice-${practice.handNumber}`,
       mode: 'practice',
       handNumber: practice.handNumber,
       stake: practice.stake,
-      handSize: h.my9.length,
-      meId: 'me', oppId: 'bot', meName: 'You', oppName: BOT_NAME, oppConnected: true,
-      meSeat: h.mySeat, oppSeat: h.botSeat,
-      hand: h.my9, keep: h.myKeep, drawn: h.myDrawn,
-      oppAnnounce: botAnnounce,
-      acting: h.acting,
+      handSize: H,
+      n: h.n,
+      meId: 'me', meName: 'You', mePos: h.order.indexOf('me'),
+      seats: h.order.map((id, pos) => ({
+        id, name: playerName(id), pos, isMe: id === 'me', connected: true,
+        announce: h.keep[id] ? { discards: G.discardCount(h.keep[id].length, H), draws: h.drawn[id].length } : null
+      })),
+      ring: practice.ring,
+      hand: h.cards.me, keep: h.keep.me || null, drawn: h.drawn.me || null,
+      actingId,
       flopA: h.flopA, flopB: h.flopB,
       results: h.results,
       grade: h.grade || null,
       botThinking,
-      cumulative: { me: practice.cumulative.me, opp: practice.cumulative.bot },
+      cumulative: { ...practice.cumulative },
       history: practice.history
     };
   }
 
   function practiceHumanDraw(keep) {
     const h = practice.hand;
-    if (h.myKeep || h.acting !== h.mySeat) return;
-    h.myKeep = keep;
-    h.myDrawn = h.deck.splice(0, G.drawCount(keep.length));
+    if (h.keep.me || h.order[h.actingIndex] !== 'me') return;
+    h.keep.me = keep;
+    h.drawn.me = h.deck.splice(0, G.drawCount(keep.length));
     gradeMyDraw(h);
-    if (h.mySeat === 'oop') {
-      h.acting = 'ip';
-      renderTable();
-      maybeBotAct();
-    } else {
-      finishPractice();
-    }
+    advancePractice(h);
+  }
+  function advancePractice(h) {
+    h.actingIndex += 1;
+    if (h.actingIndex >= h.n) { finishPractice(); return; }
+    renderTable();
+    maybeBotAct();
   }
 
   // ---------- instant GTO feedback on your draw ----------
   // As soon as both your keep and the solve exist, grade the keep against the best one
-  // (same comparison as the study panel: EV vs the equilibrium range, given the bot's
-  // announcement when you're in position). Ties within the error bar count as GTO.
+  // (same comparison as the study panel: EV vs the equilibrium ranges, given every
+  // announcement you heard). Ties within the error bar count as GTO.
   const GRADES = [
     { key: 'gto', label: 'GTO!', note: 'the solver’s play', max: 0, sound: 'gto' },
     { key: 'good', label: 'Good', note: 'close to the best', max: 0.10, sound: 'good' },
@@ -803,11 +940,19 @@
   }
 
   // ---------- decision log (feeds mistake replay and rules of thumb) ----------
+  // Each record: players (2|3), pos (place in the action order), anns (draw counts heard),
+  // plus the heads-up fields seat ('oop'|'ip') and ann that older records carry.
   const DECISIONS_KEY = 'drawmaha-duel-decisions', MISTAKES_KEY = 'drawmaha-duel-mistakes';
   function loadJSON(key, fallback) { try { return JSON.parse(localStorage.getItem(key) || 'null') || fallback; } catch (e) { return fallback; } }
   function saveJSON(key, v) { try { localStorage.setItem(key, JSON.stringify(v)); } catch (e) { /* storage full or blocked */ } }
+  // Older (heads-up only) records and spots have just seat/ann; fill in players/pos/anns.
+  function normSpot(x) {
+    if (x.players) return x;
+    const ip = x.seat === 'ip';
+    return { ...x, players: 2, pos: ip ? 1 : 0, anns: ip ? [x.ann] : [] };
+  }
   function recordDecision(rec) {
-    const r = { ...rec, t: Date.now(), myDraw: 5 - rec.myKeep.length, bestDraw: 5 - rec.bestKeep.length };
+    const r = { ...normSpot(rec), t: Date.now(), myDraw: 5 - rec.myKeep.length, bestDraw: 5 - rec.bestKeep.length };
     const log = loadJSON(DECISIONS_KEY, []);
     log.push(r);
     while (log.length > 1500) log.shift();
@@ -815,7 +960,8 @@
     // Mistakes and blunders go into the replay deck (unless this was itself a replay).
     if ((r.grade === 'mistake' || r.grade === 'blunder') && r.source !== 'replay') {
       const deck = loadJSON(MISTAKES_KEY, []);
-      deck.push({ id: `${r.t}-${Math.random().toString(36).slice(2, 7)}`, spot: { flopA: r.flopA, flopB: r.flopB, hand: r.hand, seat: r.seat, ann: r.ann },
+      deck.push({ id: `${r.t}-${Math.random().toString(36).slice(2, 7)}`,
+        spot: { flopA: r.flopA, flopB: r.flopB, hand: r.hand, seat: r.seat, ann: r.ann, players: r.players, pos: r.pos, anns: r.anns },
         firstGrade: r.grade, firstLoss: r.loss, myKeep: r.myKeep, bestKeep: r.bestKeep, added: r.t, box: 0, due: r.t, attempts: 0, correct: 0 });
       while (deck.length > 300) deck.shift();
       saveJSON(MISTAKES_KEY, deck);
@@ -824,22 +970,23 @@
   }
 
   function gradeMyDraw(h) {
-    if (!h || h.grade || !h.myKeep || h.solve.status !== 'done') return;
-    const NK = S.layout(h.my9.length).NKEEPS;
+    if (!h || h.grade || !h.keep.me || h.solve.status !== 'done') return;
+    const NK = S.layout(h.cards.me.length).NKEEPS;
     const me = h.solve.result.observers.find((o) => o.id === 'me');
-    // In position, grade against the announcement you actually heard.
-    if (h.mySeat === 'ip' && !h.botKeep) return;
-    const off = h.mySeat === 'ip' ? h.botDrawn.length * NK : 0;
+    const pos = h.order.indexOf('me');
+    // Everyone before me has announced by the time I draw: grade against what I heard.
+    const anns = handAnns(h, pos);
+    const off = blockOf(anns) * NK;
     let best = 0;
     for (let k = 1; k < NK; k++) if (me.ev[off + k] > me.ev[off + best]) best = k;
-    const mine = keepIndexOf(h.my9, h.myKeep);
+    const mine = keepIndexOf(h.cards.me, h.keep.me);
     const loss = me.ev[off + best] - me.ev[off + mine];
     const grade = gradeFor(loss, me.seDiff[off + mine], mine === best);
     h.grade = { key: grade.key, label: grade.label, loss, best, mine };
     recordDecision({
-      source: 'game', flopA: h.flopA, flopB: h.flopB, hand: h.my9, seat: h.mySeat,
-      ann: h.mySeat === 'ip' ? h.botDrawn.length : null, preset: h.preset,
-      myKeep: h.myKeep, bestKeep: S.keepCards(h.my9, best), loss, grade: grade.key
+      source: 'game', flopA: h.flopA, flopB: h.flopB, hand: h.cards.me, players: h.n, pos, anns,
+      seat: legacySeat(h.n, pos), ann: h.n === 2 && pos === 1 ? anns[0] : null, preset: h.preset,
+      myKeep: h.keep.me, bestKeep: S.keepCards(h.cards.me, best), loss, grade: grade.key
     });
     // session tallies + streak
     practice.drawsGraded = (practice.drawsGraded || 0) + 1;
@@ -883,28 +1030,30 @@
     }
   }
 
-  // The bot draws once it's its turn AND the flop solve has finished.
+  // A bot draws once it's its turn AND the flop solve has finished, sampling its keep from
+  // the solver's mix for exactly the announcements it heard.
   function maybeBotAct() {
     const h = practice && practice.hand;
-    if (!h || h.botKeep || h.acting !== h.botSeat) return;
+    if (!h || h.results) return;
+    const id = h.order[h.actingIndex];
+    if (!id || id === 'me' || h.keep[id] || h.botPending === id) return;
     if (h.solve.status === 'running') { renderTable(); return; }
-    let ki;
-    const NK = S.layout(h.bot9.length).NKEEPS;
+    const NK = S.layout(h.cards[id].length).NKEEPS;
+    let ki = 0; // solver failed (shouldn't happen): keep the first five dealt cards
     if (h.solve.status === 'done') {
-      const o = h.solve.result.observers.find((x) => x.id === 'bot');
-      const freqs = h.botSeat === 'oop' ? o.freq : o.freq.slice(h.myDrawn.length * NK, (h.myDrawn.length + 1) * NK);
-      ki = S.sampleMixed(freqs);
-    } else {
-      // Solver failed (shouldn't happen) — fall back to keeping the best 5 dealt cards.
-      ki = 0;
+      const o = h.solve.result.observers.find((x) => x.id === id);
+      const b = blockOf(handAnns(h, h.actingIndex));
+      ki = S.sampleMixed(o.freq.slice(b * NK, (b + 1) * NK));
     }
-    h.botKi = ki;
-    const keep = S.keepCards(h.bot9, ki);
+    h.botKi[id] = ki;
+    h.botPending = id;
+    const keep = S.keepCards(h.cards[id], ki);
     setTimeout(() => {
       if (!practice || practice.hand !== h) return;
-      h.botKeep = keep;
-      h.botDrawn = h.deck.splice(0, G.drawCount(keep.length));
-      if (h.botSeat === 'oop') { h.acting = 'ip'; renderTable(); } else finishPractice();
+      h.botPending = null;
+      h.keep[id] = keep;
+      h.drawn[id] = h.deck.splice(0, G.drawCount(keep.length));
+      advancePractice(h);
     }, 500);
   }
 
@@ -912,25 +1061,32 @@
     const h = practice.hand;
     const boardA = [...h.flopA, ...h.deck.splice(0, 2)];
     const boardB = [...h.flopB, ...h.deck.splice(0, 2)];
-    const seats = { me: { dealt: h.my9, kept: h.myKeep, drawn: h.myDrawn, name: 'You' }, bot: { dealt: h.bot9, kept: h.botKeep, drawn: h.botDrawn, name: BOT_NAME } };
-    const oopId = h.mySeat === 'oop' ? 'me' : 'bot', ipId = oopId === 'me' ? 'bot' : 'me';
-    const fin = (id) => [...seats[id].kept, ...seats[id].drawn];
-    const res = G.scoreShowdown(oopId, fin(oopId), ipId, fin(ipId), boardA, boardB);
-    const dollars = { me: res.units.me * practice.stake, bot: res.units.bot * practice.stake };
-    practice.cumulative.me += dollars.me;
-    practice.cumulative.bot += dollars.bot;
-    practice.history.push({ handNumber: practice.handNumber, me: dollars.me, scoop: res.scoop === 'me' ? 'me' : res.scoop ? 'opp' : null });
+    const fin = (id) => [...h.keep[id], ...h.drawn[id]];
+    let res;
+    if (h.n === 2) {
+      const [a, b] = h.order;
+      res = G.scoreShowdown(a, fin(a), b, fin(b), boardA, boardB);
+    } else {
+      const finals = {};
+      for (const id of h.order) finals[id] = fin(id);
+      res = G.scoreTable(h.order, finals, boardA, boardB);
+    }
+    const dollars = {};
+    for (const id of h.order) { dollars[id] = res.units[id] * practice.stake; practice.cumulative[id] += dollars[id]; }
+    const scoops = res.matchups
+      ? res.matchups.filter((m) => m.scoop).map((m) => ({ winner: m.scoop, loser: m.scoop === m.a ? m.b : m.a }))
+      : res.scoop ? [{ winner: res.scoop, loser: h.order.find((x) => x !== res.scoop) }] : [];
+    practice.history.push({ handNumber: practice.handNumber, me: dollars.me, scoops });
     practice.stats.push(handStats(h, dollars.me));
-    h.acting = null;
     h.results = {
-      handNumber: practice.handNumber, stake: practice.stake, boardA, boardB, oopId, ipId,
-      players: [oopId, ipId].map((id) => ({
-        id, name: seats[id].name, kept: seats[id].kept, drawn: seats[id].drawn, final: fin(id),
-        discarded: seats[id].dealt.filter((c) => !seats[id].kept.includes(c)),
-        discards: G.discardCount(seats[id].kept.length, seats[id].dealt.length), draws: seats[id].drawn.length
+      handNumber: practice.handNumber, stake: practice.stake, boardA, boardB, playerCount: h.n, order: h.order.slice(),
+      players: h.order.map((id) => ({
+        id, name: playerName(id), kept: h.keep[id], drawn: h.drawn[id], final: fin(id),
+        discarded: h.cards[id].filter((c) => !h.keep[id].includes(c)),
+        discards: G.discardCount(h.keep[id].length, h.cards[id].length), draws: h.drawn[id].length
       })),
-      evals: res.evals, contests: res.contests, scoop: res.scoop, units: res.units, dollars,
-      cumulative: { ...practice.cumulative }
+      evals: res.evals, contests: res.contests, scoop: res.scoop || null, matchups: res.matchups || null,
+      units: res.units, dollars, cumulative: { ...practice.cumulative }
     };
     renderTable();
   }
@@ -938,53 +1094,60 @@
   // =====================================================================
   // SESSION GRAPH (practice): PnL, post-discard EV, GTO EV, GTO post-discard EV, EV lost
   // =====================================================================
-  // Per-hand numbers, in dollars:
+  // Per-hand numbers, in dollars (3-handed: summed over both matchups):
   //   pnl            — what actually changed hands
-  //   postDiscard    — my kept cards vs the bot's kept cards, averaged over both players'
+  //   postDiscard    — my kept cards vs the bots' kept cards, averaged over everyone's
   //                    draws and every turn/river: the luck that comes after the decisions
-  //   gto            — EV of the solver's best keep for my dealt cards vs the equilibrium range
-  //   gtoPostDiscard — the solver's best keep vs the bot's kept cards, same averaging
+  //   gto            — EV of the solver's best keep for my dealt cards vs the equilibrium ranges
+  //   gtoPostDiscard — the solver's best keep vs the bots' kept cards, same averaging
   //                    (identical to postDiscard whenever I made the GTO keep)
   //   evLoss         — EV of the keep I chose minus that best keep (≤ 0)
-  // When I'm in position, "vs the equilibrium range" means given the bot's actual
-  // announcement, since that's what I knew when I drew.
+  // "vs the equilibrium ranges" is given every announcement I heard, since that's what I
+  // knew when I drew.
   const POST_DISCARD_SAMPLES = 12000;
   function handStats(h, pnl) {
     const stake = practice.stake;
-    const dead = [...h.flopA, ...h.flopB, ...h.my9, ...h.bot9];
+    const others = h.order.filter((id) => id !== 'me');
+    const dead = [...h.flopA, ...h.flopB, ...h.order.flatMap((id) => h.cards[id])];
     // One seed per hand: both post-discard numbers use the same shuffles, so the gap
     // between them is the keep, not sampling noise.
     const seed = (Math.random() * 2 ** 31) | 0;
-    const equity = (meKeep, oppKeep) => S.keepEquityVs({
-      meKeep, meDraw: 5 - meKeep.length, oppKeep, oppDraw: 5 - oppKeep.length,
+    const equity = (meKeep, oppKeeps) => window.Solver3.keepEquityMulti({
+      meKeep, meDraw: 5 - meKeep.length, opps: oppKeeps.map((k) => ({ keep: k, draw: 5 - k.length })),
       flopA: h.flopA, flopB: h.flopB, dead, samples: POST_DISCARD_SAMPLES, seed
     });
-    const postDiscard = equity(h.myKeep, h.botKeep);
+    const postDiscard = equity(h.keep.me, others.map((id) => h.keep[id]));
     let gto = null, mine = null, gtoPostDiscard = null;
     if (h.solve.status === 'done') {
-      const L = S.layout(h.my9.length), NK = L.NKEEPS;
-      const me = h.solve.result.observers.find((o) => o.id === 'me');
-      const bot = h.solve.result.observers.find((o) => o.id === 'bot');
-      const off = h.mySeat === 'ip' ? h.botDrawn.length * NK : 0;
+      const L = S.layout(h.cards.me.length), NK = L.NKEEPS;
+      const obs = (id) => h.solve.result.observers.find((o) => o.id === id);
+      const me = obs('me'), pos = h.order.indexOf('me');
+      const off = blockOf(handAnns(h, pos)) * NK;
       let bestK = 0;
       for (let k = 1; k < NK; k++) if (me.ev[off + k] > me.ev[off + bestK]) bestK = k;
-      const myK = keepIndexOf(h.my9, h.myKeep);
+      const myK = keepIndexOf(h.cards.me, h.keep.me);
       gto = me.ev[off + bestK];
       mine = me.ev[off + myK];
       if (bestK === myK) {
         gtoPostDiscard = postDiscard;
       } else {
-        // If I'm out of position and the best keep would have announced a different draw
-        // count, the bot would have answered that announcement instead — use its solver
-        // play for it. Otherwise the bot's actual keep stands.
-        const bestKeep = S.keepCards(h.my9, bestK), bestDraw = L.KEEP_DRAW[bestK];
-        let oppKeep = h.botKeep;
-        if (h.mySeat === 'oop' && bestDraw !== h.myDrawn.length) {
-          let bk = 0;
-          for (let k = 1; k < NK; k++) if (bot.freq[bestDraw * NK + k] > bot.freq[bestDraw * NK + bk]) bk = k;
-          oppKeep = S.keepCards(h.bot9, bk);
+        // Players after me hear the best keep's draw count instead of mine. Where that
+        // changes what they heard, they answer it the solver's way (their most-played keep
+        // for it); where it doesn't, their actual keep stands.
+        const heard = handAnns(h, pos).concat([L.KEEP_DRAW[bestK]]);
+        const keepFor = {};
+        for (let p = pos + 1; p < h.n; p++) {
+          const id = h.order[p], actual = handAnns(h, p);
+          if (heard.every((d, i) => d === actual[i])) keepFor[id] = h.keep[id];
+          else {
+            const o = obs(id), b = blockOf(heard), NKo = S.layout(h.cards[id].length).NKEEPS;
+            let bk = 0;
+            for (let k = 1; k < NKo; k++) if (o.freq[b * NKo + k] > o.freq[b * NKo + bk]) bk = k;
+            keepFor[id] = S.keepCards(h.cards[id], bk);
+          }
+          heard.push(5 - keepFor[id].length);
         }
-        gtoPostDiscard = equity(bestKeep, oppKeep);
+        gtoPostDiscard = equity(S.keepCards(h.cards.me, bestK), others.map((id) => keepFor[id] || h.keep[id]));
       }
     }
     return {
@@ -1211,8 +1374,10 @@
     if (!h) return;
     el('solveProgressBar').style.width = `${Math.round(h.solve.progress * 100)}%`;
     el('studyStatus').textContent = `Solving this flop… ${Math.round(h.solve.progress * 100)}%`;
-    if (h.acting === h.botSeat && !h.botKeep) {
-      el('oppStatus').textContent = `Solving the flop… ${Math.round(h.solve.progress * 100)}%`;
+    const id = h.order[h.actingIndex];
+    if (id && id !== 'me' && !h.keep[id]) {
+      const st = document.querySelector(`#oppSeats [data-seat-id="${id}"] .seat-status`);
+      if (st) st.textContent = `Solving the flop… ${Math.round(h.solve.progress * 100)}%`;
     }
   }
 
@@ -1243,15 +1408,18 @@
     if (!h) return;
     const sv = h.solve;
     const body = el('studyBody');
-    const decided = !!h.myKeep;
+    const decided = !!h.keep.me;
     const visible = !!h.results || h.peek;
+    const n = h.n, pos = h.order.indexOf('me');
+    const nm = (p) => playerName(h.order[p]);
     el('btnAdvice').textContent = h.peek ? 'Hide solver' : 'Peek at solver';
 
     if (sv.status === 'running') {
       show('solveProgress');
       el('solveProgressBar').style.width = `${Math.round(sv.progress * 100)}%`;
       el('studyStatus').textContent = `Solving this flop… ${Math.round(sv.progress * 100)}%`;
-      body.innerHTML = `<p class="hint">The bot solves each flop pair for an approximate equilibrium (${S.PRESETS[h.preset].M.toLocaleString()} sampled hands per seat, ${window.SolverPool.workerCount} worker thread${window.SolverPool.workerCount > 1 ? 's' : ''}) before it draws.${h.mySeat === 'oop' ? ' You act first, so go ahead — it will be ready by the time it needs it.' : ''}</p>`;
+      const who = n === 3 ? 'The bots solve each flop pair for an approximate 3-handed equilibrium' : 'The bot solves each flop pair for an approximate equilibrium';
+      body.innerHTML = `<p class="hint">${who} (${S.PRESETS[h.preset].M.toLocaleString()} sampled hands per seat, ${window.SolverPool.workerCount} worker thread${window.SolverPool.workerCount > 1 ? 's' : ''}) before ${n === 3 ? 'they draw' : 'it draws'}.${pos === 0 ? ' You act first, so go ahead — it will be ready by the time it’s needed.' : ''}</p>`;
       return;
     }
     hide('solveProgress');
@@ -1260,52 +1428,62 @@
       body.innerHTML = `<p class="error">The solver failed on this hand: ${esc(sv.error)}</p>`;
       return;
     }
-    el('studyStatus').textContent = `Solved in ${sv.seconds.toFixed(1)} s · ${h.preset} depth`;
+    el('studyStatus').textContent = `Solved in ${sv.seconds.toFixed(1)} s · ${h.preset} depth${n === 3 ? ' · 3-handed' : ''}`;
     if (!visible) {
       body.innerHTML = `<p class="hint">Solved and hidden until the hand is over. ${decided ? '' : 'Click <strong>Peek at solver</strong> if you want the answer before you draw.'}</p>`;
       return;
     }
 
     const res = sv.result;
-    const NK = S.layout(h.my9.length).NKEEPS, KD = S.layout(h.my9.length).KEEP_DRAW;
+    const L = S.layout(h.cards.me.length), NK = L.NKEEPS, KD = L.KEEP_DRAW;
     const meObs = res.observers.find((o) => o.id === 'me');
-    const botObs = res.observers.find((o) => o.id === 'bot');
     const stake = practice.stake;
     const sum = res.summary;
-    const iAmIP = h.mySeat === 'ip';
-    // Which announcement to view (IP only): the real one if we have it, else a tab choice.
-    const actualD = iAmIP && h.botKeep ? h.botDrawn.length : null;
-    if (iAmIP && h.studyTab === null) h.studyTab = actualD !== null ? actualD : 0;
-    const d = iAmIP ? h.studyTab : null;
-    const evOf = (ki) => (iAmIP ? meObs.ev[d * NK + ki] : meObs.ev[ki]);
-    const freqOf = (ki) => (iAmIP ? meObs.freq[d * NK + ki] : meObs.freq[ki]);
-    const seOf = (ki) => (iAmIP ? meObs.se[d * NK + ki] : meObs.se[ki]);
-    const seDiffOf = (ki) => (iAmIP ? meObs.seDiff[d * NK + ki] : meObs.seDiff[ki]);
+    // Which announcements to view: the real ones once they're known, else a tab choice.
+    const allHeard = h.order.slice(0, pos).every((id) => h.keep[id]);
+    const actual = allHeard ? handAnns(h, pos) : null;
+    if (!h.studyAnns || h.studyAnns.length !== pos) h.studyAnns = h.order.slice(0, pos).map((id) => (h.keep[id] ? h.drawn[id].length : 0));
+    const ctxAnns = h.studyAnns;
+    const off = blockOf(ctxAnns) * NK;
+    const isActual = !!actual && actual.every((d, i) => d === ctxAnns[i]);
+    const ctxText = (anns) => anns.map((d, p) => `${nm(p)} ${annLabel(d)}`).join(', ');
+    const evOf = (ki) => meObs.ev[off + ki];
+    const freqOf = (ki) => meObs.freq[off + ki];
+    const seOf = (ki) => meObs.se[off + ki];
+    const seDiffOf = (ki) => meObs.seDiff[off + ki];
+    // How likely a context is at equilibrium (to flag rarely-reached announcements).
+    const ctxProb = (anns) => {
+      if (!anns.length) return 1;
+      if (n === 2) return sum.oopDraw[anns[0]];
+      return anns.length === 1 ? sum.draw0[anns[0]] : sum.ctxP[anns[0] * 4 + anns[1]];
+    };
 
     const order = Array.from({ length: NK }, (_, i) => i).sort((a, b) => evOf(b) - evOf(a));
     const bestKi = order[0];
-    const myKi = decided ? keepIndexOf(h.my9, h.myKeep) : -1;
+    const myKi = decided ? keepIndexOf(h.cards.me, h.keep.me) : -1;
 
     let html = '';
 
     // --- verdict on the keep you made ---
-    if (decided && myKi >= 0 && (!iAmIP || d === actualD)) {
+    if (decided && myKi >= 0 && (pos === 0 || isActual)) {
       const lost = evOf(bestKi) - evOf(myKi);
       const rank = order.indexOf(myKi) + 1;
       const tied = myKi !== bestKi && lost <= seDiffOf(myKi);
-      html += `<div class="verdict">Your keep (${DRAW_NAMES[KD[myKi]].toLowerCase()}) has EV ${evText(evOf(myKi), stake, seOf(myKi))} per hand — #${rank} of ${NK}.
+      html += `<div class="verdict">Your keep (${DRAW_NAMES[KD[myKi]].toLowerCase()}) has EV ${evText(evOf(myKi), stake, seOf(myKi))} per hand${n === 3 ? ' (both matchups)' : ''} — #${rank} of ${NK}.
         ${myKi === bestKi ? '<strong class="good">That’s the solver’s top choice.</strong>'
           : tied ? `<strong class="good">Statistically tied with the best keep</strong> (${evText(evOf(bestKi), stake)}; the ${lost.toFixed(2)} gap is within the ±${seDiffOf(myKi).toFixed(2)} error on the difference).`
           : `The best keep was worth ${evText(evOf(bestKi), stake, seOf(bestKi))}: <strong class="bad">you gave up ${lost.toFixed(2)} ±${seDiffOf(myKi).toFixed(2)} stakes (${money(lost * stake, { sign: false })})</strong>.`}</div>`;
     }
 
     // --- your keep options ---
-    html += `<div class="study-section"><h4>Your keep options${iAmIP ? '' : ''}</h4>`;
-    if (iAmIP) {
-      html += `<p>You're in position, so your best keep depends on what ${BOT_NAME} announced. Pick an announcement:</p><div class="study-tabs">` +
-        [0, 1, 2, 3].map((x) => `<button class="study-tab${x === d ? ' active' : ''}" data-d="${x}">${BOT_NAME} ${x === 0 ? 'pats' : 'draws ' + x}${x === actualD ? ' (actual)' : ''}</button>`).join('') + '</div>';
+    html += `<div class="study-section"><h4>Your keep options</h4>`;
+    if (pos > 0) {
+      html += `<p>${pos === 1 ? `You act after ${esc(nm(0))}` : `You act last, after ${esc(nm(0))} and ${esc(nm(1))}`}, so your best keep depends on what you heard. Pick the announcement${pos > 1 ? 's' : ''}:</p>`;
+      for (let p = 0; p < pos; p++) {
+        html += `<div class="study-tabs">` + [0, 1, 2, 3].map((x) => `<button class="study-tab${p > 0 ? ' sub' : ''}${ctxAnns[p] === x ? ' active' : ''}" data-p="${p}" data-d="${x}">${esc(nm(p))} ${annLabel(x)}${actual && actual[p] === x ? ' (actual)' : ''}</button>`).join('') + '</div>';
+      }
     } else {
-      html += `<p>You're out of position: your draw count is announced before ${BOT_NAME} decides, and these EVs already account for how it reacts.</p>`;
+      html += `<p>You act first: your draw count is announced before ${n === 2 ? `${esc(nm(1))} decides` : `${esc(nm(1))} and ${esc(nm(2))} decide`}, and these EVs already account for how ${n === 2 ? 'it reacts' : 'they react'}.</p>`;
     }
     const rows = order.slice(0, 10);
     if (myKi >= 0 && !rows.includes(myKi)) rows.push(myKi);
@@ -1325,75 +1503,106 @@
     // hands like yours
     const sim = meObs.similar;
     if (sim) {
-      const simMix = iAmIP ? sim.mix[d] : sim.mix;
-      html += `<p style="margin-top:12px"><strong>Hands like yours</strong> <span class="hint-inline" style="color:var(--muted)">(the ${sim.n} sampled hands with the closest EV profile${iAmIP ? `, after ${BOT_NAME} ${d === 0 ? 'pats' : 'draws ' + d}` : ''})</span> play:</p><div class="mix-row"><span>Equilibrium</span>${mixBar(simMix)}</div>`;
+      const simMix = Array.isArray(sim.mix[0]) ? sim.mix[blockOf(ctxAnns)] : sim.mix;
+      html += `<p style="margin-top:12px"><strong>Hands like yours</strong> <span class="hint-inline" style="color:var(--muted)">(the ${sim.n} sampled hands with the closest EV profile${pos > 0 ? `, after ${esc(ctxText(ctxAnns))}` : ''})</span> play:</p><div class="mix-row"><span>Equilibrium</span>${mixBar(simMix)}</div>`;
     }
     html += '</div>';
 
-    // --- IP: how the best keep shifts with the announcement ---
-    if (iAmIP) {
-      html += `<div class="study-section"><h4>How your best keep reacts to the announcement</h4><table class="ev-table"><tr><th>If ${BOT_NAME}…</th><th>Best keep</th><th>EV / hand</th><th>Draw</th></tr>`;
+    // --- how the best keep shifts with the last announcement heard ---
+    if (pos > 0) {
+      const last = pos - 1, fixed = ctxAnns.slice(0, last);
+      html += `<div class="study-section"><h4>How your best keep reacts to ${esc(nm(last))}'s announcement${fixed.length ? ` <span class="hint-inline" style="color:var(--muted)">(with ${esc(ctxText(fixed))})</span>` : ''}</h4><table class="ev-table"><tr><th>If ${esc(nm(last))}…</th><th>Best keep</th><th>EV / hand</th><th>Draw</th></tr>`;
       [0, 1, 2, 3].forEach((x) => {
+        const anns = fixed.concat([x]), bo = blockOf(anns) * NK;
         let b = 0;
-        for (let ki = 1; ki < NK; ki++) if (meObs.ev[x * NK + ki] > meObs.ev[x * NK + b]) b = ki;
-        html += `<tr data-ki="${b}" class="${x === actualD ? 'chosen' : ''}"><td>${x === 0 ? 'pats' : 'draws ' + x}${x === actualD ? ' <span class="tag-mini">actual</span>' : ''}${sum.oopDraw[x] < 0.02 ? ' <span class="tag-mini" title="Equilibrium OOP almost never announces this, so these numbers lean on a small trembling-hand sample">rare</span>' : ''}</td><td class="keepcell"></td><td>${evText(meObs.ev[x * NK + b], stake)}</td><td>${DRAW_NAMES[KD[b]]}</td></tr>`;
+        for (let ki = 1; ki < NK; ki++) if (meObs.ev[bo + ki] > meObs.ev[bo + b]) b = ki;
+        const isAct = actual && anns.every((d, i) => d === actual[i]);
+        html += `<tr data-ki="${b}" class="${isAct ? 'chosen' : ''}"><td>${annLabel(x)}${isAct ? ' <span class="tag-mini">actual</span>' : ''}${ctxProb(anns) < 0.02 ? ' <span class="tag-mini" title="At equilibrium this announcement almost never happens, so these numbers lean on a small trembling-hand sample">rare</span>' : ''}</td><td class="keepcell"></td><td>${evText(meObs.ev[bo + b], stake)}</td><td>${DRAW_NAMES[KD[b]]}</td></tr>`;
       });
       html += '</table></div>';
     }
 
     // --- the flop's equilibrium ---
-    const vO = sum.valueOop;
-    html += `<div class="study-section"><h4>This flop's equilibrium</h4>
-      <div class="stat-grid">
-        <div class="stat"><div class="k">OOP value / hand</div><div class="v">${evText(vO, stake)}</div></div>
-        <div class="stat"><div class="k">IP value / hand</div><div class="v">${evText(-vO, stake)}</div></div>
-        <div class="stat"><div class="k">Avg gain from deviating</div><div class="v">${sum.exploitability.toFixed(3)} <span class="hint-inline" style="color:var(--muted)">stakes</span></div></div>
-        <div class="stat"><div class="k">Sampled range</div><div class="v" style="font-size:.85rem">${sum.M.toLocaleString()} hands per seat · ${sum.groupsO} groups · ${sum.rounds} refinement rounds</div></div>
-      </div>
-      <p style="margin-top:12px"><strong>How often OOP announces each draw</strong> (across all hands it could hold here):</p>
-      <div class="mix-row"><span>OOP</span>${mixBar(sum.oopDraw)}</div>
-      <p style="margin-top:12px"><strong>How IP responds</strong> to each announcement:</p>
-      ${[0, 1, 2, 3].map((x) => `<div class="mix-row"><span>OOP ${x === 0 ? 'pats' : 'draws ' + x} <span class="hint-inline" style="color:var(--muted)">IP ${units(sum.ipValueGiven[x])}</span></span>${mixBar(sum.ipDrawGiven[x])}</div>`).join('')}
-      ${mixLegend()}
-      <p class="hint" style="margin-top:8px">The number next to each announcement is IP's equilibrium EV after hearing it — the bigger it is, the more that announcement costs OOP.</p>
-    </div>`;
+    if (n === 2) {
+      const vO = sum.valueOop;
+      html += `<div class="study-section"><h4>This flop's equilibrium</h4>
+        <div class="stat-grid">
+          <div class="stat"><div class="k">OOP value / hand</div><div class="v">${evText(vO, stake)}</div></div>
+          <div class="stat"><div class="k">IP value / hand</div><div class="v">${evText(-vO, stake)}</div></div>
+          <div class="stat"><div class="k">Avg gain from deviating</div><div class="v">${sum.exploitability.toFixed(3)} <span class="hint-inline" style="color:var(--muted)">stakes</span></div></div>
+          <div class="stat"><div class="k">Sampled range</div><div class="v" style="font-size:.85rem">${sum.M.toLocaleString()} hands per seat · ${sum.groupsO} groups · ${sum.rounds} refinement rounds</div></div>
+        </div>
+        <p style="margin-top:12px"><strong>How often OOP announces each draw</strong> (across all hands it could hold here):</p>
+        <div class="mix-row"><span>OOP</span>${mixBar(sum.oopDraw)}</div>
+        <p style="margin-top:12px"><strong>How IP responds</strong> to each announcement:</p>
+        ${[0, 1, 2, 3].map((x) => `<div class="mix-row"><span>OOP ${annLabel(x)} <span class="hint-inline" style="color:var(--muted)">IP ${units(sum.ipValueGiven[x])}</span></span>${mixBar(sum.ipDrawGiven[x])}</div>`).join('')}
+        ${mixLegend()}
+        <p class="hint" style="margin-top:8px">The number next to each announcement is IP's equilibrium EV after hearing it — the bigger it is, the more that announcement costs OOP.</p>
+      </div>`;
+    } else {
+      const d0v = ctxAnns.length ? ctxAnns[0] : (h.keep[h.order[0]] ? h.drawn[h.order[0]].length : 0);
+      html += `<div class="study-section"><h4>This flop's 3-handed equilibrium</h4>
+        <div class="stat-grid">
+          ${[0, 1, 2].map((p) => `<div class="stat"><div class="k">${G.seatLabel(3, p)} value / hand${h.order[p] === 'me' ? ' (you)' : ''}</div><div class="v">${evText(sum.values[p], stake, sum.valuesSe ? sum.valuesSe[p] : undefined)}</div></div>`).join('')}
+          <div class="stat"><div class="k">Avg gain from deviating</div><div class="v">${sum.exploitability.toFixed(3)} <span class="hint-inline" style="color:var(--muted)">stakes</span></div></div>
+          <div class="stat"><div class="k">Sampled range</div><div class="v" style="font-size:.85rem">${sum.M.toLocaleString()} hands per seat · ${sum.rounds} rounds</div></div>
+        </div>
+        <p style="margin-top:12px"><strong>How often the 1st player announces each draw:</strong></p>
+        <div class="mix-row"><span>1st</span>${mixBar(sum.draw0)}</div>
+        <p style="margin-top:12px"><strong>How the 2nd player responds</strong> to each announcement:</p>
+        ${[0, 1, 2, 3].map((x) => `<div class="mix-row"><span>1st ${annLabel(x)}</span>${mixBar(sum.draw1Given[x])}</div>`).join('')}
+        <p style="margin-top:12px"><strong>How the button responds</strong> when the 1st player ${annLabel(d0v)}:</p>
+        ${[0, 1, 2, 3].map((x) => `<div class="mix-row"><span>2nd ${annLabel(x)}</span>${mixBar(sum.draw2Given[d0v * 4 + x])}</div>`).join('')}
+        ${mixLegend()}
+        <p class="hint" style="margin-top:8px">Seat values come from replaying the solved strategies against each other (± replay error) and sum to zero. They also carry the luck of which hands were sampled for each seat — roughly ±0.1 stakes on Fast, less on deeper settings — so small gaps between seats don't mean much.</p>
+      </div>`;
+    }
 
     // --- range viewer for this flop ---
     html += `<details class="rv-inline"${h.rvOpen ? ' open' : ''}><summary>🗺️ Range viewer for this flop</summary><div class="rv-host"></div></details>`;
 
-    // --- the bot's play (only once its cards are visible) ---
-    if (h.results && h.botKi !== undefined) {
-      const bd = h.botSeat === 'ip' ? h.myDrawn.length : null;
-      const bf = (ki) => (bd === null ? botObs.freq[ki] : botObs.freq[bd * NK + ki]);
-      const be = (ki) => (bd === null ? botObs.ev[ki] : botObs.ev[bd * NK + ki]);
-      const mix = Array.from({ length: NK }, (_, i) => i).filter((ki) => bf(ki) >= 0.05).sort((a, b) => bf(b) - bf(a)).slice(0, 4);
-      html += `<div class="study-section"><h4>${BOT_NAME}'s draw</h4><div class="bot-dealt" id="botDealt"><span class="discard-label">Dealt</span></div><p>${h.botSeat === 'ip' ? `After you ${h.myDrawn.length === 0 ? 'patted' : 'drew ' + h.myDrawn.length}, it` : 'Acting first, it'} was choosing between:</p>
-        <table class="ev-table"><tr><th>Keep</th><th>EV / hand</th><th>Draw</th><th>Mix</th></tr>
-        ${mix.map((ki) => `<tr data-bot-ki="${ki}" class="${ki === h.botKi ? 'chosen' : ''}"><td class="keepcell"></td><td>${evText(be(ki), stake, bd === null ? botObs.se[ki] : botObs.se[bd * NK + ki])}</td><td>${DRAW_NAMES[KD[ki]]}</td><td>${(bf(ki) * 100).toFixed(0)}%${ki === h.botKi ? ' <span class="tag-mini">played</span>' : ''}</td></tr>`).join('')}
-        </table></div>`;
+    // --- the bots' play (only once their cards are visible) ---
+    if (h.results) {
+      for (const id of h.order) {
+        if (id === 'me' || h.botKi[id] === undefined) continue;
+        const botObs = res.observers.find((o) => o.id === id);
+        const bp = h.order.indexOf(id), bAnns = handAnns(h, bp), bo = blockOf(bAnns) * NK;
+        const bf = (ki) => botObs.freq[bo + ki], be = (ki) => botObs.ev[bo + ki], bse = (ki) => botObs.se[bo + ki];
+        const mix = Array.from({ length: NK }, (_, i) => i).filter((ki) => bf(ki) >= 0.05).sort((a, b) => bf(b) - bf(a)).slice(0, 4);
+        const heardTxt = bAnns.map((d, p) => (h.order[p] === 'me' ? `you ${annPast(d)}` : `${nm(p)} ${annPast(d)}`)).join(' and ');
+        html += `<div class="study-section"><h4>${esc(playerName(id))}'s draw</h4><div class="bot-dealt" data-bot-dealt="${id}"><span class="discard-label">Dealt</span></div><p>${bp === 0 ? 'Acting first, it' : `After ${esc(heardTxt)}, it`} was choosing between:</p>
+          <table class="ev-table"><tr><th>Keep</th><th>EV / hand</th><th>Draw</th><th>Mix</th></tr>
+          ${mix.map((ki) => `<tr data-bot-ki="${ki}" data-bot-id="${id}" class="${ki === h.botKi[id] ? 'chosen' : ''}"><td class="keepcell"></td><td>${evText(be(ki), stake, bse(ki))}</td><td>${DRAW_NAMES[KD[ki]]}</td><td>${(bf(ki) * 100).toFixed(0)}%${ki === h.botKi[id] ? ' <span class="tag-mini">played</span>' : ''}</td></tr>`).join('')}
+          </table></div>`;
+      }
     }
 
-    html += `<p class="study-foot">How this works: the solver deals ${sum.M.toLocaleString()} random hands to each seat on these two flops and races every keep of every hand over 100+ runouts to find its best keep at each draw count. It groups hands with similar EV profiles (${sum.groupsO} groups), solves the group game with CFR+ (OOP picks a draw count; IP sees it and picks its own), then lets every sampled hand re-optimize against the other side for ${sum.rounds} rounds. Your hand and the bot's are scored with all ${NK} keeps against ${sum.obs.toLocaleString()} opponent hands drawn from that solved range (per announcement, when in position); neither real hand is visible to the other side. EVs are stakes per hand (a contest = 1, a scoop = 6); ± is the sampling error of your hand's evaluation — re-solving with a fresh sample of hands moves EVs by roughly that much again on Deep, less on Max/Ultra. "Solver plays" is the best keep plus any keep statistically tied with it, which is also how the bot picks. "Avg gain from deviating" is how much a sampled hand could still gain by switching strategy — near zero means the solve has settled.</p>`;
+    html += n === 2
+      ? `<p class="study-foot">How this works: the solver deals ${sum.M.toLocaleString()} random hands to each seat on these two flops and races every keep of every hand over 100+ runouts to find its best keep at each draw count. It groups hands with similar EV profiles (${sum.groupsO} groups), solves the group game with CFR+ (OOP picks a draw count; IP sees it and picks its own), then lets every sampled hand re-optimize against the other side for ${sum.rounds} rounds. Your hand and the bot's are scored with all ${NK} keeps against ${sum.obs.toLocaleString()} opponent hands drawn from that solved range (per announcement, when in position); neither real hand is visible to the other side. EVs are stakes per hand (a contest = 1, a scoop = 6); ± is the sampling error of your hand's evaluation — re-solving with a fresh sample of hands moves EVs by roughly that much again on Deep, less on Max/Ultra. "Solver plays" is the best keep plus any keep statistically tied with it, which is also how the bot picks. "Avg gain from deviating" is how much a sampled hand could still gain by switching strategy — near zero means the solve has settled.</p>`
+      : `<p class="study-foot">How this works: the solver deals ${sum.M.toLocaleString()} random hands to each of the three seats on these flops and races every keep of every hand over 100+ runouts. Starting from "everyone keeps their best made hand", the 1st player, the 2nd player and the button take turns re-scoring every keep against the other two seats' current play — the 2nd player against the 1st-seat hands that would have made the announcement it heard, the button against both — and nudging their strategy toward the best one, for ${sum.rounds} rounds (fictitious play; 3-player games have no single equilibrium, so this finds a stable approximate one). Your hand and the bots' are then scored with all ${NK} keeps against ${sum.obs.toLocaleString()} pairs of opponent hands per announcement, dealt together so card removal is exact. EVs are stakes per hand summed over your two matchups (a contest = 1, a scoop = 6); ± is sampling error. "Solver plays" is the best keep plus any keep statistically tied with it, which is also how the bots pick.</p>`;
 
     // Tables scroll sideways on narrow phones instead of crushing the card rows.
     html = html.replace(/<table class="ev-table">/g, '<div class="table-scroll"><table class="ev-table">').replace(/<\/table>/g, '</table></div>');
     body.innerHTML = html;
     body.querySelectorAll('tr[data-ki] .keepcell').forEach((td) => {
       const ki = Number(td.parentElement.dataset.ki);
-      td.appendChild(miniCards(S.keepCards(h.my9, ki)));
+      td.appendChild(miniCards(S.keepCards(h.cards.me, ki)));
     });
-    const dealtBox = body.querySelector('#botDealt');
-    if (dealtBox) dealtBox.appendChild(miniCards(h.bot9.filter((c) => h.botKeep.includes(c)).concat(h.bot9.filter((c) => !h.botKeep.includes(c))), { highlight: h.botKeep }));
+    body.querySelectorAll('[data-bot-dealt]').forEach((box) => {
+      const id = box.dataset.botDealt;
+      box.appendChild(miniCards(h.cards[id].filter((c) => h.keep[id].includes(c)).concat(h.cards[id].filter((c) => !h.keep[id].includes(c))), { highlight: h.keep[id] }));
+    });
     body.querySelectorAll('tr[data-bot-ki] .keepcell').forEach((td) => {
-      td.appendChild(miniCards(S.keepCards(h.bot9, Number(td.parentElement.dataset.botKi))));
+      const tr = td.parentElement;
+      td.appendChild(miniCards(S.keepCards(h.cards[tr.dataset.botId], Number(tr.dataset.botKi))));
     });
     body.querySelectorAll('.study-tab[data-d]').forEach((b) => b.addEventListener('click', () => {
-      h.studyTab = Number(b.dataset.d);
+      h.studyAnns[Number(b.dataset.p)] = Number(b.dataset.d);
       renderStudy();
     }));
     const rvHost = body.querySelector('.rv-host');
     if (rvHost && res.range && window.DDTrainer) {
-      window.DDTrainer.renderRangeViewer(rvHost, res.range, iAmIP ? { tab: 'ip', ann: d } : { tab: 'oop' });
+      window.DDTrainer.renderRangeViewer(rvHost, res.range, { pos, anns: ctxAnns });
       const det = rvHost.closest('details');
       det.addEventListener('toggle', () => { h.rvOpen = det.open; });
     }
@@ -1404,7 +1613,7 @@
     el, show, hide, toggle, esc, money, units, cls, cardEl, miniCards, sortCards, bestFiveOrder,
     getSortMode: () => cardSortMode, DRAW_NAMES, evText, mixBar, mixLegend, keepIndexOf,
     gradeFor, GRADES, showGradeToastFor, playGradeSound, recordDecision, loadJSON, saveJSON,
-    DECISIONS_KEY, MISTAKES_KEY, showScreen,
+    DECISIONS_KEY, MISTAKES_KEY, showScreen, normSpot, blockOf, annLabel, annPast, posClass, posChipHTML, positionBannerHTML,
     enterTrain: () => { if (practice) { window.SolverPool.cancel(); practice = null; } if (es) { es.close(); es = null; } mode = 'train'; },
     leaveTrain: () => { mode = null; },
     onSort: null, onDecision: null

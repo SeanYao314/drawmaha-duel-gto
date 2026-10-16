@@ -328,6 +328,34 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .pos-chip.oop { background: #dbe8fb; color: #123f7a; }
 .seat-me.seat-ip { border: 2px solid #e7c24a; background: #fffcf0; }
 .seat-me.seat-oop { border: 2px solid #7aa7e8; background: #f6f9ff; }
+/* 3-handed: the 2nd player gets teal */
+.pos-banner.mid { background: #e3f5f2; border-color: #5cb8a7; color: #0e4a40; }
+.pos-banner .pb-num { width: 30px; height: 30px; border-radius: 50%; background: #0e4a40; color: #fff; font-weight: 900; font-size: 1rem; align-items: center; justify-content: center; }
+.pos-chip.mid { background: #d4efe9; color: #0e4a40; }
+.seat-me.seat-mid { border: 2px solid #5cb8a7; background: #f4fbf9; }
+.opp-seats.two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.opp-seats.two .seat { margin-bottom: 14px; min-width: 0; }
+.opp-seats.two .seat-cards { gap: 5px; min-height: 60px; }
+.opp-seats.two .discard-group { margin-left: 6px; padding-left: 8px; }
+@media (max-width: 760px) { .opp-seats.two { grid-template-columns: 1fr; gap: 0; } }
+/* 3-handed results */
+.place { display: inline-block; font-size: .62rem; font-weight: 900; padding: 1px 6px; border-radius: 999px; margin-right: 3px; vertical-align: 1px; letter-spacing: .03em; }
+.place.p1 { background: #1a7f37; color: #fff; }
+.place.p2 { background: #e8eaee; color: #444b55; }
+.place.p3 { background: #fbe1de; color: #8f1d14; }
+.matchup-list { margin-top: 12px; border: 1px solid #eef0f2; border-radius: 12px; padding: 8px 12px; }
+.mu-title { font-size: .72rem; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: 4px; }
+.mu-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 6px 0; border-top: 1px solid #f3f4f6; font-size: .88rem; }
+.mu-row:first-of-type { border-top: none; }
+.mu-row.mine .mu-names { font-weight: 800; }
+.mu-names { min-width: 130px; font-weight: 600; }
+.mu-marks { display: inline-flex; gap: 4px; }
+.mu-c { font-size: .72rem; font-weight: 800; padding: 2px 6px; border-radius: 6px; background: #f1f2f4; color: var(--muted); }
+.mu-c.w { background: #e3f6e9; color: #145c2a; }
+.mu-c.l { background: #fdecea; color: #8f1d14; }
+.mu-scoop { font-size: .78rem; font-weight: 800; color: #6b4f00; background: #fff4d6; padding: 2px 8px; border-radius: 999px; }
+.mu-net { margin-left: auto; font-weight: 800; font-variant-numeric: tabular-nums; }
+.mu-net.pos { color: #1a7f37; } .mu-net.neg { color: var(--danger); }
 
 /* GTO feedback */
 .grade-badge { font-size: .74rem; font-weight: 900; letter-spacing: .03em; padding: 3px 10px; border-radius: 999px; }
@@ -594,6 +622,10 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
   .contest-table td.c-result { grid-area: result; text-align: right; }
   .contest-table td[data-who="me"] { grid-area: me; }
   .contest-table td[data-who="opp"] { grid-area: opp; }
+  .contest-table tr.three { grid-template-columns: 1fr 1fr 1fr; grid-template-areas: "label label label" "p0 p1 p2"; }
+  .contest-table td[data-who="p0"] { grid-area: p0; } .contest-table td[data-who="p1"] { grid-area: p1; } .contest-table td[data-who="p2"] { grid-area: p2; }
+  .contest-table tr.three .playing-card.small { width: 22px; height: 33px; font-size: .62rem; }
+  .contest-table tr.three .c-hand .mini { gap: 2px; flex-wrap: wrap; }
   .contest-table td.c-hand::before { content: attr(data-name); display: block; font-size: .68rem; color: var(--muted); font-weight: 700; text-transform: uppercase; }
   .contest-table .playing-card.small, .ev-table .playing-card.small { width: 26px; height: 38px; font-size: .7rem; }
   .seat-head .sort-control { margin-left: 0; }
@@ -652,3 +684,5 @@ button.sm { padding: 7px 12px; font-size: .85rem; width: auto; }
 #drHint .playing-card.small { width: 32px; height: 46px; font-size: .82rem; }
 .solver-keep-label { font-weight: 800; color: #1a7f37; }
 .study-tab.sub.active { background: #7b5cd6; color: #fff; }
+.pos-banner .pb-heard { margin-left: auto; font-size: .85rem; white-space: nowrap; background: rgba(255,255,255,.6); padding: 3px 10px; border-radius: 999px; }
+@media (max-width: 640px) { .pos-banner { flex-wrap: wrap; } .pos-banner .pb-heard { margin-left: 0; white-space: normal; } }

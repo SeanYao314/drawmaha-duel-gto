@@ -1,6 +1,6 @@
 # Drawmaha Duel
 
-A heads-up poker side game in the Drawmaha family, playable in the browser. It has real-time two-player rooms and a practice mode against a bot that solves every flop for an approximate equilibrium. A study panel then shows you what the solver thinks of your draw.
+A poker side game in the Drawmaha family, playable in the browser heads-up or 3-handed. It has real-time rooms for 2 or 3 players and a practice mode against bots that solve every flop for an approximate equilibrium. A study panel then shows you what the solver thinks of your draw.
 
 Like its sibling project (Taiwanese Poker), it has **no dependencies**. It runs on Node's built-in `http` module, with nothing to `npm install`.
 
@@ -21,6 +21,16 @@ Like its sibling project (Taiwanese Poker), it has **no dependencies**. It runs 
 - **The button switches every hand.**
 - **Discards are shown at showdown.** You see your opponent's discards, and they see yours.
 
+### 3-handed
+
+Rooms, practice, drills and the range viewer all have a 3-handed option.
+
+- **Order.** The player left of the button acts first, then the next player, then the button. Each player hears every earlier draw count before choosing their keep.
+- **Payouts.** Every pair of players settles the three contests between themselves, as if heads-up. With players A, B and C, that's three matchups: A vs B, A vs C and B vs C. A scoop doubles only the matchup it's in. Your result for the hand is the sum of your two matchups.
+- **The button moves one seat every hand** (A → B → C), so everyone takes each position in turn. The first button is random.
+- **Showdown.** The results table shows everyone's hand in each contest with their place (1st–3rd; ties share a place), then the three matchups with a ✓ / ✗ / = per contest, any scoop, and the money.
+- **Cards.** Even with 10 cards each, a 3-handed hand uses at most 49 cards (30 dealt, 6 on the flops, 9 drawn, 4 turns and rivers), so the deck never runs out.
+
 ### 7, 8 and 10-card variants
 
 The game also runs with 7, 8 or 10 cards dealt. You pick the hand size when you create a room or start practice, and in practice you can change it between hands. The rest of the game is unchanged: you still keep 2–5 cards and draw back up to 5.
@@ -36,7 +46,7 @@ Fewer dealt cards means fewer made hands, so players pat less, draw more, and th
 
 If you play at $100 per contest, each contest is worth $100 and a scoop is worth $600. The stake is picked when a room is created.
 
-Rule constants live in `lib/game.js`: hand size, keep range, the scoop multiplier, and the contest list. `scoreShowdown` is the single place that decides who wins what.
+Rule constants live in `lib/game.js`: hand size, keep range, the scoop multiplier, and the contest list. `scoreShowdown` decides a heads-up hand and `scoreTable` a 3-handed one (each of its matchups is exactly a heads-up showdown).
 
 ## Running it locally
 
@@ -51,21 +61,21 @@ Open the page in two browser windows, or send the room link to a friend, to play
 
 ## Live rooms
 
-1. One player creates a room and picks the stake and the number of cards dealt (7–10). They get a 4-character code and a share link.
-2. The opponent joins with the code. Rooms are heads-up only.
-3. The host starts the game. The first button is random, and it alternates after that.
+1. One player creates a room and picks **heads-up or 3-handed**, the stake and the number of cards dealt (7–10). They get a 4-character code and a share link.
+2. The other players join with the code. A full room turns further players away.
+3. Once every seat is filled, the host starts the game. The first button is random, and it moves one seat each hand after that.
 4. Each player sees their 9 cards and both flops, all fully visible, then clicks the cards to discard (4–7 with 9 cards). A marked card drops down and fades, and clicking it again keeps it.
    - The **Sort** control reorders your cards by **Dealt**, **Rank**, **Suit** or **Best 5**. Best 5 puts your strongest 5-card poker hand first, in reading order (trips before the pair, straights from the top), labels it (e.g. "Best 5 · Flush"), outlines those five cards, and puts a divider before the leftover cards. Your choice is remembered.
    - The draw button always says what will happen, for example "Discard 6 · draw 2" or "Pat — discard 4".
-   - IP can line up a keep early, but can't submit it until OOP's draw count is announced.
-5. After IP draws, the turns and rivers come out one at a time. The opponent's final cards flip over, then the three contests and any scoop are shown. A chime plays when you win, with a bigger one for a scoop. The 🔊 button mutes it.
+   - A later player can line up a keep early, but can't submit it until everyone before them has announced.
+5. After the last player draws, the turns and rivers come out one at a time. The opponent's final cards flip over, then the three contests and any scoop are shown. A chime plays when you win, with a bigger one for a scoop. The 🔊 button mutes it.
 6. Either player can deal the next hand. Running totals and a hand history stay for the session.
 
 Refreshing or reconnecting puts you back in your seat. Rooms live in server memory only, so restarting the server clears them.
 
 ## Practice vs the bot, and the study panel
 
-The **Practice vs Bot** tab runs entirely in your browser. There's no room and no server round-trip. You and the bot alternate positions.
+The **Practice vs Bot** tab runs entirely in your browser. There's no room and no server round-trip. Play **heads-up against one bot** (you alternate positions) or **3-handed against two** (Bot 1 and Bot 2; the button rotates through all three seats). Each bot plays the solver's strategy for exactly the announcements it heard.
 
 Before the bot draws, it solves the current flop pair (details below). The solve runs in Web Workers spread across your CPU cores, so the page stays responsive. If you're out of position, you act while it solves.
 
@@ -77,23 +87,23 @@ Before the bot draws, it solves the current flop pair (details below). The solve
 | Max | 2,400 | 64 | 3 | 10,000 | ~75 s |
 | Ultra | 3,600 | 80 | 3 | 16,000 | ~2 min |
 
-The work splits across your cores, so divide those times by roughly the number of cores you have, minus one. The 10-card game takes longest, because each hand has 627 ways to keep. The study panel shows the actual time for each solve. Your last practice settings are remembered.
+The work splits across your cores, so divide those times by roughly the number of cores you have, minus one. **3-handed solves take about 4× longer** (three seats, and the button has 16 possible pairs of announcements to answer): Deep is about 2 minutes single-core, so roughly 15–20 seconds on an 8-core laptop. The 10-card game takes longest, because each hand has 627 ways to keep. The study panel shows the actual time for each solve. Your last practice settings are remembered.
 
 The **Solver study** panel stays hidden until the hand is over, unless you click **Peek at solver**. It shows:
 
 - **Verdict.** Your keep's EV per hand (± one standard error), its rank among all possible keeps, and how much EV you gave up compared with the best keep. If the gap is within the error bar, it says the two are statistically tied.
 - **Your keep options.** The top keeps with EV ± error, a **tie** tag on any keep the solver can't separate from the best, and how the solver plays your hand. It also shows the best keep for each draw count, and **hands like yours**: the equilibrium draw mix of the 40 sampled hands whose EV profile is closest to yours.
-  - When you're IP, there's a tab for each possible announcement ("bot pats", "bot draws 1", and so on), with the real one marked.
-  - A second table shows how your best keep changes with the announcement.
+  - When you act after someone, there's a tab for each possible announcement ("bot pats", "bot draws 1", and so on), with the real one marked. On the 3-handed button there are two rows of tabs, one per earlier player.
+  - A second table shows how your best keep changes with the last announcement you heard.
 - **This flop's equilibrium.**
-  - The value of being OOP or IP on this flop.
-  - How often OOP announces each draw count, and how IP responds to each announcement.
+  - The value of each seat on this flop.
+  - How often the first player announces each draw count, and how later players respond. 3-handed, this shows the 2nd player's response to each announcement and the button's response to each 2nd-player announcement.
   - "Avg gain from deviating": how much a sampled hand could still gain by switching strategy. Near zero means the solve has settled.
-- **The bot's draw.** Once the cards are shown: its full dealt hand (kept cards highlighted, discards faded), which keeps it was choosing between, and which one it played. Its discards also appear next to its final hand on the table.
+- **The bot's draw** (both bots' draws, 3-handed). Once the cards are shown: its full dealt hand (kept cards highlighted, discards faded), which keeps it was choosing between, and which one it played. Its discards also appear next to its final hand on the table.
 
 ### Position and draw feedback
 
-- **Position banner.** A color-coded banner above the table says where you sit this hand. Gold with a **D** button means you're in position: the opponent draws first and you decide after hearing the count. Blue means you're out of position and act first. Your seat is outlined in the same color, the button holder's chip shows the D, and the banner pulses whenever a new hand is dealt. This works in live games too.
+- **Position banner.** A color-coded banner above the table says where you sit this hand. Gold with a **D** button means you're on the button (in position) and act last, after hearing the counts. Blue means you act first. Teal (3-handed only) means you're 2nd to act. Your seat is outlined in the same color, the button holder's chip shows the D, and the banner pulses whenever a new hand is dealt. This works in live games too.
 - **GTO grade (practice).** As soon as your draw and the bot's solve are both in, your keep is graded against the solver's best keep (given the bot's real announcement when you're in position). The grade appears as a pop-up, a badge on your seat and a sound:
   - **✓ GTO!** if you found the best draw or one statistically tied with it. It plays a bright chime that climbs in pitch as your streak grows, and the pop-up shows "🔥 N in a row".
   - **Good** if it's within 0.10 stakes, **Inaccuracy** within 0.30, **Mistake** within 0.75, and **Blunder** beyond that. Mistakes and blunders play a low "thud".
@@ -105,9 +115,9 @@ The **Solver study** panel stays hidden until the hand is over, unless you click
 Below the table, practice mode keeps a running **Session** panel. It has the totals, a line chart by hand (hover for the values after any hand), and a hand-by-hand table:
 
 - **PnL:** the money that actually changed hands.
-- **Post-discard EV:** your kept cards against the bot's kept cards, averaged over both players' draws and every turn and river (Monte Carlo, 12,000 runouts). This is everything left to chance once both players have discarded, so the gap between this line and PnL is pure luck.
+- **Post-discard EV:** your kept cards against the bot's kept cards (3-handed: against both bots' keeps, summed over your two matchups), averaged over both players' draws and every turn and river (Monte Carlo, 12,000 runouts). This is everything left to chance once both players have discarded, so the gap between this line and PnL is pure luck.
 - **GTO EV:** the EV of the solver's best draw for your dealt cards against the equilibrium range (given the bot's real announcement when you're in position). It measures how good your starting hands were.
-- **GTO post-discard EV:** the same calculation as post-discard EV, but with the solver's best keep in place of yours. If you were out of position and that keep would have announced a different count, the bot answers it the way the solver plays. When you make the GTO keep, this line is identical to post-discard EV. Both use the same random runouts for each hand, so any gap between them comes from the keep, not sampling noise.
+- **GTO post-discard EV:** the same calculation as post-discard EV, but with the solver's best keep in place of yours. If that keep would have announced a different count, every player after you answers it the way the solver plays. When you make the GTO keep, this line is identical to post-discard EV. Both use the same random runouts for each hand, so any gap between them comes from the keep, not sampling noise.
 - **EV lost:** the best draw's EV minus the EV of the draw you actually chose. It's always ≤ 0. For example, picking a keep worth +1.30 when the best was +1.43 adds −0.13 stakes (−$13 at $100).
 
 A new hand's numbers join the graph only once its reveal has finished, so the graph never spoils a result.
@@ -116,18 +126,21 @@ A new hand's numbers join the graph only once its reveal has finished, so the gr
 
 The landing page's **Train** tab opens study tools that don't need full hands. Everything runs in your browser, and progress is kept in local storage.
 
-- **🎯 Drill.** Rapid-fire draw decisions, each graded instantly with the same sound and pop-up as practice mode. You see the flops (and, in position, the bot's announcement) and mark discards. Keys **1–9 / 0** toggle cards in the order shown, and **Enter** submits or moves to the next spot. After answering, you get the solver's keep, the top keeps with EV ± error, the "hands like yours" mix, and a range viewer for that flop. The next spot is solved in the background while you think, so there's usually no wait. Filters:
-  - **Position:** random, out of position, or in position.
-  - **Bot announces:** *as GTO would* (drawn from the equilibrium's own frequencies), or fixed to **pat**, **draw 1**, **draw 2** or **draw 3**. Use this to practice responding to a specific announcement.
+- **🎯 Drill.** Rapid-fire draw decisions, heads-up or 3-handed, each graded instantly with the same sound and pop-up as practice mode. You see the flops (and, in position, the bot's announcement) and mark discards. Keys **1–9 / 0** toggle cards in the order shown, and **Enter** submits or moves to the next spot. After answering, you get the solver's keep, the top keeps with EV ± error, the "hands like yours" mix, and a range viewer for that flop. The next spot is solved in the background while you think, so there's usually no wait. Filters:
+  - **Players:** heads-up or 3-handed.
+  - **Position:** random, out of position or in position (heads-up); 1st, 2nd or button (3-handed).
+  - **Bot announces** (3-handed: **1st announces** and **2nd announces**): *as GTO would* (drawn from the equilibrium's own frequencies), or fixed to **pat**, **draw 1**, **draw 2** or **draw 3**. Use this to practice responding to specific announcements, e.g. on the button after "1st pats, 2nd draws 2".
   - **Cards dealt:** 7–10.
   - **Solver depth.**
   - **Close spots only:** the best keep and the best keep with a different draw count are within 0.15 stakes of each other, i.e. the "pat or draw?" decisions. Spots that don't qualify are skipped automatically.
-- **🔁 Mistake replay.** Every **Mistake** or **Blunder** from practice games or drills is saved. Replays use spaced repetition: a correct answer (GTO or Good) moves the spot to the next box (due again in 10 minutes, then 1, 3 and 7 days), and a wrong one sends it back to box 0. Five correct in a row retires it. The tab badge shows how many are due.
-- **📏 Rules of thumb.** Mines your last 400 graded decisions for patterns that cost you EV, and states each one in plain language with what it cost. Examples: breaking a pat to draw, patting when the solver draws, drawing too many or too few cards, the right count but the wrong cards, your weakest position or announcement, and hand types or flop textures (paired, flush-heavy) where you lose most. A breakdown table shows GTO rate and average EV lost by spot type.
+- **🔁 Mistake replay.** Every **Mistake** or **Blunder** from practice games or drills, heads-up or 3-handed, is saved with its position and the announcements you heard. Replays use spaced repetition: a correct answer (GTO or Good) moves the spot to the next box (due again in 10 minutes, then 1, 3 and 7 days), and a wrong one sends it back to box 0. Five correct in a row retires it. The tab badge shows how many are due.
+- **📏 Rules of thumb.** Mines your last 400 graded decisions for patterns that cost you EV, and states each one in plain language with what it cost. Examples: breaking a pat to draw, patting when the solver draws, drawing too many or too few cards, the right count but the wrong cards, your weakest position (heads-up OOP/IP or 3-handed 1st/2nd/button) or announcement, and hand types or flop textures (paired, flush-heavy) where you lose most. A breakdown table shows GTO rate and average EV lost by spot type.
 - **🗺️ Range viewer.** Enter any two flops (or pick random ones) and solve. Each hand type is labelled by the best plain 5-card hand in the dealt cards, and three tabs show:
   - how out-of-position hands draw at equilibrium;
   - how in-position hands respond to each announcement;
   - what out-of-position holds when it makes each announcement.
+
+  With **Players: 3-handed** the tabs are the 1st player's strategy, the 2nd player's response to each announcement, the button's response to each pair of announcements, and what the 1st and 2nd players hold when they make each announcement.
 
   The same viewer is in the practice study panel and after every drill.
 
@@ -171,10 +184,22 @@ The agreement count barely moved, and that's expected. On the close hand, the to
 - The solver ignores the blocking effect of the *opponent's discards*. Only the cards each side keeps are forced apart.
 - "Avg gain from deviating" uses scouting EVs, which carry a little noise, so it slightly overstates the remaining gap.
 
+### The 3-handed solver (lib/solver3.js)
+
+Three-player games don't have the single, well-defined equilibrium that heads-up ones do, and CFR comes with no guarantees there. So the 3-handed solver uses the per-hand **fictitious play** that ends the heads-up solve, on its own:
+
+1. **Population.** Thousands of random hands for each of the three seats.
+2. **Start.** Every hand finds its best keep at each draw count against two opponents who keep their strongest made five.
+3. **Rounds.** In turn, the 1st player, the 2nd player and the button re-score every keep of every sampled hand against the other two seats' current play, conditioned on what they heard. A 2nd-seat hand faces the 1st-seat hands that would have made the announcement it heard, plus button hands answering its own count. A button hand faces the hands that would have made both announcements it heard. Each hand moves its strategy toward its best response, averaged over 3–5 rounds. Because your result is the sum of two head-up matchups, a hand's EV is the sum of its EV against each opponent, which lets scouting score the two opponents separately.
+4. **Real hands.** Your hand and the bots' are scored with every keep against thousands of *pairs* of opponent hands per context, dealt together so card removal between all three hands is exact.
+
+The seat values shown are measured by replaying the solved strategies against each other, so they sum to zero. They also carry the luck of which hands were sampled for each seat: about ±0.1 stakes on Fast, less on deeper settings.
+
 To solve a flop from the command line (single-threaded), run:
 
 ```bash
 node experiments/solve_flop.js "Kh 9d 4s" "Jc Jd 6h" --oop "Ah Kd Qs Jh Td 9h 9c 5c 2d" --ip "As Ks 8h 8c 7d 6s 5h 3c 2c" --preset deep
+node experiments/solve_flop.js "Kh 9d 4s" "Jc Jd 6h" --players 3 --button "As Ks 8h 8c 7d 6s 5h 3c 2c" --preset standard
 ```
 
 ## Deploying so friends can join
@@ -186,9 +211,10 @@ Deployment works the same way as the Taiwanese Poker project. Any host that runs
 ```
 server.js                 HTTP server: static files, /lib/*.js, room API, SSE push
 lib/poker.js              Readable 5-card evaluator + PLO construction (live scoring, display)
-lib/game.js               Drawmaha Duel rules: deal, keep validation, 3 contests, scoop
+lib/game.js               Drawmaha Duel rules: deal, keep validation, 3 contests, scoop, 3-handed matchups
 lib/fasteval.js           Table-driven evaluator + whole-board pair tables for the solver
-lib/solver.js             Range-sampling solver: keep racing, hand grouping + CFR+, per-hand refinement
+lib/solver.js             Heads-up solver: keep racing, hand grouping + CFR+, per-hand refinement
+lib/solver3.js            3-handed solver: fictitious play over three sampled ranges
 public/index.html         App shell (landing / lobby / table)
 public/style.css          Styling (same look as Taiwanese Poker; 4-color deck)
 public/client.js          Live game client, practice controller, study panel
