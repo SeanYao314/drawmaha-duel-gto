@@ -231,12 +231,19 @@
             <svg id="sessionChart" role="img" aria-label="Cumulative results by hand"></svg>
             <div class="chart-tip hidden" id="chartTip"></div>
           </div>
+          <div class="hand-strips" id="handStripsBox">
+            <div class="hs-head">
+              <span class="hs-title">Per hand</span>
+              <span class="hs-which" id="hsWhich"></span>
+            </div>
+            <div id="handStrips"></div>
+          </div>
         </div>
         <details class="session-table-box">
           <summary>Hand-by-hand table</summary>
           <div id="sessionTable"></div>
         </details>
-        <p class="study-foot"><strong>PnL</strong>: money actually won or lost. <strong>Post-discard EV</strong>: your kept cards against the bot's kept cards, averaged over both players' draws and every turn and river — everything left to chance once both of you have discarded. <strong>GTO EV</strong>: what your dealt cards were worth with the solver's best draw against the equilibrium range — how good your starting hands were. <strong>GTO post-discard EV</strong>: the same as post-discard EV, but with the solver's best keep in place of yours (if you were out of position and that keep announces a different count, the bot answers it the solver's way); when you make the GTO keep, the two lines match. <strong>EV lost</strong>: the best draw's EV minus the EV of the draw you chose (always ≤ 0) — what your drawing decisions cost against the range. All lines are running totals.</p>
+        <p class="study-foot"><strong>PnL</strong>: money actually won or lost. <strong>Post-discard EV</strong>: your kept cards against the bot's kept cards, averaged over both players' draws and every turn and river — everything left to chance once both of you have discarded. <strong>GTO EV</strong>: what your dealt cards were worth with the solver's best draw against the equilibrium range — how good your starting hands were. <strong>GTO post-discard EV</strong>: the same as post-discard EV, but with the solver's best keep in place of yours (if you were out of position and that keep announces a different count, the bot answers it the solver's way); when you make the GTO keep, the two lines match. <strong>EV lost</strong>: the best draw's EV minus the EV of the draw you chose (always ≤ 0) — what your drawing decisions cost against the range. The big chart shows running totals; the <strong>Per hand</strong> strips underneath show each hand on its own (bars above the line are gains, below are losses, all on one shared scale). Hover either one to inspect a hand.</p>
       </div>
 
       <!-- solver study panel (practice) -->

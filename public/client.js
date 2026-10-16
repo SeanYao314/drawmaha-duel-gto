@@ -1042,6 +1042,7 @@
       `<div class="stat"><div class="k">GTO draws</div><div class="v">${graded.length ? `${hits}/${graded.length} <span class="hint-inline" style="color:var(--muted)">(${Math.round(100 * hits / graded.length)}%)</span>` : '—'}</div>${practice.bestStreak ? `<div class="hint-inline" style="color:var(--muted)">best streak ${practice.bestStreak}${practice.streak ? ` · current ${practice.streak}` : ''}</div>` : ''}</div>`;
     el('chartLegend').innerHTML = SERIES.map((sr) => `<span class="key"><svg width="22" height="8"><line x1="1" y1="4" x2="21" y2="4" stroke="${sr.color}" stroke-width="2.5" stroke-linecap="round"${sr.dash ? ` stroke-dasharray="${sr.dash}"` : ''}/></svg>${sr.name}</span>`).join('');
     drawChart(stats);
+    drawStrips(stats);
     el('sessionTable').innerHTML = stats.length
       ? `<div class="table-scroll"><table class="session-table"><tr><th>Hand</th><th>Draw grade</th>${SERIES.map((sr) => `<th>${sr.name}</th>`).join('')}</tr>` +
         stats.map((x) => `<tr><td>#${x.hand}</td><td>${x.grade || '—'}</td>${SERIES.map((sr) => `<td class="${x[sr.key] === null ? '' : cls(Math.round(x[sr.key]))}">${x[sr.key] === null ? '—' : money(x[sr.key])}</td>`).join('')}</tr>`).join('') +
@@ -1101,6 +1102,68 @@
     hit.addEventListener('touchstart', (e) => onChartHover(e.touches[0]), { passive: true });
   }
 
+  // Per-hand strips: one small bar row per metric, every hand on a shared scale.
+  const STRIP_ORDER = ['pnl', 'postDiscard', 'gto', 'gtoPostDiscard', 'evLoss'];
+  let stripStats = [];
+  function drawStrips(stats) {
+    stripStats = stats;
+    const box = el('handStrips');
+    if (!stats.length) { hide('handStripsBox'); box.innerHTML = ''; return; }
+    show('handStripsBox');
+    const n = stats.length;
+    const rows = STRIP_ORDER.map((k) => SERIES.find((sr) => sr.key === k));
+    let m = 1;
+    for (const x of stats) for (const sr of rows) if (x[sr.key] !== null) m = Math.max(m, Math.abs(x[sr.key]));
+    const slot = 10, H = 44, mid = H / 2, half = mid - 2;
+    const bw = n > 60 ? slot * 0.9 : slot * 0.7, off = (slot - bw) / 2;
+    box.innerHTML = rows.map((sr) => {
+      let bars = '';
+      stats.forEach((x, i) => {
+        const v = x[sr.key];
+        if (v === null) return;
+        const h = Math.max(v === 0 ? 0 : 0.8, (Math.abs(v) / m) * half);
+        bars += `<rect class="hs-bar" data-i="${i}" x="${i * slot + off}" y="${v >= 0 ? mid - h : mid}" width="${bw}" height="${h}" fill="${sr.color}"/>`;
+      });
+      const vals = stats.map((x) => x[sr.key]).filter((v) => v !== null);
+      const avg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+      return `<div class="hs-row" data-key="${sr.key}">
+        <span class="hs-name"><i style="background:${sr.color}"></i>${sr.name}</span>
+        <span class="hs-val" data-key="${sr.key}"></span>
+        <svg class="hs-svg" viewBox="0 0 ${n * slot} ${H}" preserveAspectRatio="none" role="img" aria-label="${sr.name} per hand">
+          <line x1="0" x2="${n * slot}" y1="${mid}" y2="${mid}" stroke="var(--axis)" stroke-width="1" vector-effect="non-scaling-stroke"/>${bars}
+        </svg>
+        <span class="hs-avg">${avg === null ? '—' : `avg ${money(avg)}`}</span>
+      </div>`;
+    }).join('');
+    box.querySelectorAll('.hs-svg').forEach((svg) => {
+      const at = (ev) => {
+        const r = svg.getBoundingClientRect();
+        return Math.max(0, Math.min(n - 1, Math.floor(((ev.clientX - r.left) / r.width) * n)));
+      };
+      svg.addEventListener('mousemove', (ev) => setStripFocus(at(ev)));
+      svg.addEventListener('mouseleave', () => setStripFocus(null));
+      svg.addEventListener('touchstart', (ev) => setStripFocus(at(ev.touches[0])), { passive: true });
+    });
+    setStripFocus(null);
+  }
+  // Show hand i's values (or the latest hand when i is null) and highlight its bars.
+  function setStripFocus(i) {
+    const n = stripStats.length;
+    if (!n) return;
+    const idx = i === null ? n - 1 : i;
+    const x = stripStats[idx];
+    el('hsWhich').textContent = i === null ? `Last hand · #${x.hand}${x.grade ? ` · ${x.grade}` : ''}` : `Hand #${x.hand}${x.grade ? ` · ${x.grade}` : ''}`;
+    document.querySelectorAll('#handStrips .hs-val').forEach((c) => {
+      const v = x[c.dataset.key];
+      c.className = `hs-val ${v === null ? '' : cls(Math.round(v))}`;
+      c.textContent = v === null ? '—' : money(v);
+    });
+    const box = el('handStrips');
+    box.classList.toggle('focusing', i !== null);
+    box.querySelectorAll('.hs-bar.on').forEach((b) => b.classList.remove('on'));
+    box.querySelectorAll(`.hs-bar[data-i="${idx}"]`).forEach((b) => b.classList.add('on'));
+  }
+
   function onChartHover(ev) {
     if (!chartState) return;
     const svg = el('sessionChart');
@@ -1119,6 +1182,7 @@
       SERIES.map((sr) => `<div class="tip-row"><span><i style="background:${sr.color}"></i>${sr.name}</span><strong>${money(cum[sr.key][i])}</strong></div>`).join('') +
       (hs ? `<div class="tip-row" style="margin-top:4px;color:var(--text-muted)"><span>This hand</span><span>${money(hs.pnl)} PnL</span></div>` : '');
     show('chartTip');
+    setStripFocus(i > 0 ? i - 1 : null);
     const left = (x(i) / scale) + 12;
     tip.style.left = `${Math.min(left, rect.width - tip.offsetWidth - 6)}px`;
     tip.style.top = '8px';
@@ -1129,6 +1193,7 @@
     const dots = el('chartHoverDots');
     if (dots) dots.innerHTML = '';
     hide('chartTip');
+    setStripFocus(null);
   }
   window.addEventListener('resize', () => { if (practice && mode === 'practice') renderSession(reveal.stage); });
 

@@ -469,6 +469,25 @@ button.primary:hover:not(:disabled) { filter: brightness(1.08); }
 .chart-tip i { display: inline-block; width: 10px; height: 3px; border-radius: 2px; }
 .stat .v .pos { color: #1a7f37; } .stat .v .neg { color: var(--danger); }
 .session-table td.pos { color: #1a7f37; } .session-table td.neg { color: var(--danger); }
+.hand-strips { margin-top: 12px; background: var(--surface-1); border-radius: 10px; padding: 10px 12px 6px; }
+.hs-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+.hs-title { font-size: .72rem; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.hs-which { font-size: .78rem; font-weight: 700; color: var(--text-primary); }
+.hs-row { display: grid; grid-template-columns: 150px 74px 1fr 92px; align-items: center; gap: 10px; padding: 3px 0; border-top: 1px solid var(--grid); }
+.hs-row:first-of-type { border-top: none; }
+.hs-name { display: inline-flex; align-items: center; gap: 6px; font-size: .78rem; font-weight: 600; color: var(--text-secondary); white-space: nowrap; }
+.hs-name i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.hs-val { font-size: .85rem; font-weight: 800; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-primary); }
+.hs-val.pos { color: #1a7f37; } .hs-val.neg { color: var(--danger); }
+.hs-svg { display: block; width: 100%; height: 44px; cursor: crosshair; }
+.hs-bar { opacity: .5; transition: opacity .12s; }
+.hs-bar.on { opacity: 1; }
+.hs-avg { font-size: .72rem; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+@media (max-width: 640px) {
+  .hs-row { grid-template-columns: 1fr auto; row-gap: 2px; }
+  .hs-svg { grid-column: 1 / -1; }
+  .hs-avg { display: none; }
+}
 .session-table-box { margin-top: 10px; }
 .session-table-box summary { cursor: pointer; font-weight: 700; font-size: .85rem; color: var(--muted); }
 .session-table { width: 100%; border-collapse: collapse; font-size: .8rem; margin-top: 8px; }
