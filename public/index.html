@@ -202,7 +202,12 @@
             <button type="button" class="sort-btn" data-sort="best5" title="Your strongest 5-card poker hand first, then the rest">Best 5</button>
           </span>
         </div>
-        <div class="seat-cards" id="meCards"></div>
+        <div class="keep-zone" id="meKeepZone">
+          <div class="kz-label">Your five</div>
+          <div class="keep-tray" id="meTray"></div>
+        </div>
+        <div class="kz-label kz-bank-label" id="meBankLabel">Dealt cards</div>
+        <div class="seat-cards keep-bank" id="meCards"></div>
         <p class="hint keep-hint" id="keepHint"></p>
         <div class="actions" id="drawActions">
           <button id="btnClearKeep" class="secondary">Clear</button>
@@ -317,7 +322,12 @@
               <button type="button" class="sort-btn" data-sort="best5">Best 5</button>
             </span>
           </div>
-          <div class="seat-cards" id="drCards"></div>
+          <div class="keep-zone" id="drKeepZone">
+            <div class="kz-label">Your five</div>
+            <div class="keep-tray" id="drTray"></div>
+          </div>
+          <div class="kz-label kz-bank-label">Dealt cards</div>
+          <div class="seat-cards keep-bank" id="drCards"></div>
           <p class="hint keep-hint" id="drHint"></p>
           <div class="actions">
             <button id="drClear" class="secondary">Clear</button>
@@ -326,7 +336,7 @@
           </div>
         </div>
         <div id="drResult" class="study-panel hidden"></div>
-        <p class="hint" style="font-size:.78rem">Keys: <strong>1–9, 0</strong> mark cards in the order shown · <strong>Enter</strong> submit / next.</p>
+        <p class="hint" style="font-size:.78rem">Keys: <strong>1–9, 0</strong> move dealt cards (in the order shown) into or out of your five · <strong>Enter</strong> submit / next.</p>
       </div>
 
       <div id="tview-mistakes" class="tview hidden"></div>

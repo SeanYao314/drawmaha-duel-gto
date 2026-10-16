@@ -341,7 +341,7 @@
   //   n (2 or 3), seats: [{ id, name, pos, isMe, connected, announce }] in action order
   //   (button last), meId, mePos, hand/keep/drawn (mine), actingId (null once it's over),
   //   flopA/flopB, results, cumulative { id: dollars }, history.
-  const table = { key: null, selected: new Set(), error: null };
+  const table = { key: null, slots: [null, null, null, null, null], error: null };
   const reveal = { key: null, stage: 0, timer: null, lastStage: 0 };
   const FINAL_STAGE = 7; // 1 turns · 2 rivers · 3 opponents' cards · 4-6 contests · 7 totals
 
@@ -366,7 +366,7 @@
     if (!vm) return;
     if (vm.key !== table.key) {
       table.key = vm.key;
-      table.selected = new Set();
+      table.slots = emptySlots();
       table.error = null;
       hide('gameError');
     }
@@ -499,6 +499,149 @@
     });
   }
 
+  // ---------- keep picker: five boxes you fill from your dealt cards ----------
+  // slots: an array of 5 (card or null). Cards move between your dealt cards and the boxes
+  // by dragging (mouse or touch) or Ctrl/⌘-click (a plain click or a tap works too). A
+  // card that moves into the boxes leaves a blank gap where it was, so the dealt row
+  // never reshuffles — in Best 5 order, nothing new slides into the best-five group.
+  // Filled boxes are your keep; empty boxes are the cards you'll draw.
+  const emptySlots = () => [null, null, null, null, null];
+  const slotsKeep = (slots) => slots.filter(Boolean);
+  // Move `card` to `target`: { slot: i } (a box; swaps with what's there), 'bank' (back to
+  // your dealt cards) or 'toggle' (into the first empty box, or back out). Returns new slots.
+  function moveCard(slots, card, target) {
+    const s = slots.slice(), at = s.indexOf(card);
+    if (target === 'toggle') target = at >= 0 ? 'bank' : (s.indexOf(null) >= 0 ? { slot: s.indexOf(null) } : null);
+    if (!target) return s;
+    if (target === 'bank') { if (at >= 0) s[at] = null; return s; }
+    const i = target.slot;
+    if (at >= 0) { s[at] = s[i]; s[i] = card; } else s[i] = card;
+    return s;
+  }
+  let drag = null; // the card being dragged right now, if any
+  // ctx: { tray, bank, hand, slots, onChange(slots), readOnly, keyLabels, keepMark(card) }
+  function renderKeepPicker(ctx) {
+    const { tray, bank, hand, slots } = ctx;
+    const order = sortCards(hand, cardSortMode);
+    const b5 = cardSortMode === 'best5' ? bestFiveOrder(hand) : null;
+    const inTray = new Set(slotsKeep(slots));
+    tray.innerHTML = '';
+    bank.innerHTML = '';
+    slots.forEach((c, i) => {
+      const box = document.createElement('div');
+      box.className = 'keep-slot' + (c ? ' filled' : '');
+      box.dataset.slot = i;
+      if (c) {
+        const node = cardEl(c, { extra: ctx.keepMark && ctx.keepMark(c) ? 'gto-keep' : '' });
+        wireCard(node, c, ctx);
+        box.appendChild(node);
+      } else box.innerHTML = '<span class="ks-label">draw</span>';
+      tray.appendChild(box);
+    });
+    order.forEach((c, i) => {
+      if (b5 && i === 0) {
+        const tag = document.createElement('div');
+        tag.className = 'best5-tag';
+        tag.innerHTML = `<span>Best 5</span><strong>${esc(b5.category)}</strong>`;
+        bank.appendChild(tag);
+      }
+      let node;
+      if (inTray.has(c)) {
+        node = document.createElement('div');
+        node.className = 'card-gap' + (b5 && i < 5 ? ' in-best5' : '');
+        node.dataset.card = c;
+      } else {
+        node = cardEl(c, { extra: [b5 && i < 5 ? 'in-best5' : '', ctx.keepMark && ctx.keepMark(c) ? 'gto-keep' : ''].filter(Boolean).join(' ') });
+        wireCard(node, c, ctx);
+      }
+      if (ctx.keyLabels) {
+        const key = document.createElement('span');
+        key.className = 'card-key';
+        key.textContent = i < 9 ? String(i + 1) : i === 9 ? '0' : '';
+        node.appendChild(key);
+      }
+      bank.appendChild(node);
+      if (b5 && i === 4 && order.length > 5) {
+        const sep = document.createElement('div');
+        sep.className = 'best5-sep';
+        bank.appendChild(sep);
+      }
+    });
+    tray.classList.toggle('readonly', !!ctx.readOnly);
+    bank.classList.toggle('readonly', !!ctx.readOnly);
+  }
+  function wireCard(node, card, ctx) {
+    if (ctx.readOnly) { node.classList.add('static'); return; }
+    node.classList.add('draggable');
+    node.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      drag = { card, ctx, node, x0: e.clientX, y0: e.clientY, ghost: null, id: e.pointerId };
+      try { node.setPointerCapture(e.pointerId); } catch (err) { /* older browsers */ }
+    });
+  }
+  function dropTargetAt(x, y, ctx) {
+    const hit = document.elementFromPoint(x, y);
+    if (!hit) return null;
+    const box = hit.closest('.keep-slot');
+    if (box && ctx.tray.contains(box)) return { slot: Number(box.dataset.slot), node: box };
+    const home = hit.closest('.seat-cards, .keep-bank');
+    if (home && (home === ctx.bank || home.contains(ctx.bank) || ctx.bank.contains(home))) return { bank: true, node: ctx.bank };
+    return null;
+  }
+  function clearDropHover() { document.querySelectorAll('.drop-hover').forEach((n) => n.classList.remove('drop-hover')); }
+  document.addEventListener('pointermove', (e) => {
+    const d = drag;
+    if (!d || e.pointerId !== d.id) return;
+    if (!d.ghost) {
+      if (Math.hypot(e.clientX - d.x0, e.clientY - d.y0) < 6) return;
+      const r = d.node.getBoundingClientRect();
+      d.ghost = d.node.cloneNode(true);
+      d.ghost.classList.add('drag-ghost');
+      d.ghost.style.width = r.width + 'px';
+      d.ghost.style.height = r.height + 'px';
+      d.dx = d.x0 - r.left; d.dy = d.y0 - r.top;
+      document.body.appendChild(d.ghost);
+      d.node.classList.add('drag-src');
+      document.body.classList.add('dragging-card');
+    }
+    d.ghost.style.left = (e.clientX - d.dx) + 'px';
+    d.ghost.style.top = (e.clientY - d.dy) + 'px';
+    clearDropHover();
+    const t = dropTargetAt(e.clientX, e.clientY, d.ctx);
+    if (t) t.node.classList.add('drop-hover');
+  });
+  function endDrag(e, cancelled) {
+    const d = drag;
+    if (!d || e.pointerId !== d.id) return;
+    drag = null;
+    clearDropHover();
+    document.body.classList.remove('dragging-card');
+    if (d.ghost) {
+      d.ghost.remove();
+      d.node.classList.remove('drag-src');
+      if (cancelled) return;
+      // Dropped on a box: it goes there. Anywhere else: back to your dealt cards.
+      const t = dropTargetAt(e.clientX, e.clientY, d.ctx);
+      d.ctx.onChange(moveCard(d.ctx.slots, d.card, t && !t.bank ? { slot: t.slot } : 'bank'));
+    } else if (!cancelled) {
+      // A click (Ctrl/⌘-click, plain click or tap) moves the card across.
+      d.ctx.onChange(moveCard(d.ctx.slots, d.card, 'toggle'));
+    }
+  }
+  document.addEventListener('pointerup', (e) => endDrag(e, false));
+  document.addEventListener('pointercancel', (e) => endDrag(e, true));
+
+  // Hint + button text for a keep picker.
+  function keepStatus(hand, slots) {
+    const k = slotsKeep(slots).length, legal = k >= G.MIN_KEEP && k <= G.MAX_KEEP, nd = hand.length - k;
+    const hint = k === 0 ? 'Drag the cards you want to keep into the five boxes (or Ctrl/⌘-click them). Keep 2–5 — every empty box is a card you’ll draw.'
+      : k < G.MIN_KEEP ? `Keeping ${k} — keep at least ${G.MIN_KEEP}.`
+      : `Keeping ${k}, discarding ${nd} → ${k === 5 ? 'pat (draw nothing)' : 'draw ' + (5 - k)}.`;
+    const button = !legal ? `Keep ${G.MIN_KEEP}–${G.MAX_KEEP} cards` : k === 5 ? `Pat — keep all 5 (discard ${nd})` : `Keep ${k} · draw ${5 - k}`;
+    return { k, legal, hint, button };
+  }
+
   function renderMe(vm) {
     el('meName').textContent = vm.mode === 'practice' ? 'You' : `${vm.meName} (you)`;
     const myTurn = !vm.results && vm.actingId === vm.meId && !vm.keep;
@@ -510,6 +653,8 @@
     toggle('sortControl', !vm.keep);
     toggle('btnAdvice', vm.mode === 'practice' && !vm.keep && !vm.results);
 
+    toggle('meKeepZone', !vm.keep);
+    toggle('meBankLabel', !vm.keep);
     if (vm.keep) {
       // Already drawn: show the final five, new cards marked.
       [...vm.keep, ...vm.drawn].forEach((c) => box.appendChild(cardEl(c, { extra: 'static' + (vm.drawn.includes(c) ? ' drawn' : '') })));
@@ -528,61 +673,36 @@
 
     el('gradeBadge').className = 'grade-badge hidden';
     show('drawActions');
-    // All cards start fully visible; clicking a card marks it for discard (click again
-    // to keep it). Whatever isn't marked is your keep.
-    const ordered = sortCards(vm.hand, cardSortMode);
-    const b5 = cardSortMode === 'best5' ? bestFiveOrder(vm.hand) : null;
-    ordered.forEach((c, i) => {
-      if (b5 && i === 0) {
-        const tag = document.createElement('div');
-        tag.className = 'best5-tag';
-        tag.innerHTML = `<span>Best 5</span><strong>${esc(b5.category)}</strong>`;
-        box.appendChild(tag);
-      }
-      const node = cardEl(c, { extra: (table.selected.has(c) ? 'marked-discard' : '') + (b5 && i < 5 ? ' in-best5' : '') });
-      node.addEventListener('click', () => {
-        if (table.selected.has(c)) table.selected.delete(c); else table.selected.add(c);
-        renderTable();
-      });
-      box.appendChild(node);
-      if (b5 && i === 4 && ordered.length > 5) {
-        const sep = document.createElement('div');
-        sep.className = 'best5-sep';
-        box.appendChild(sep);
-      }
+    renderKeepPicker({
+      tray: el('meTray'), bank: box, hand: vm.hand, slots: table.slots,
+      onChange: (slots) => { table.slots = slots; table.error = null; renderTable(); }
     });
-
-    const nDisc = table.selected.size, k = vm.hand.length - nDisc;
-    const minDisc = vm.hand.length - G.MAX_KEEP, maxDisc = vm.hand.length - G.MIN_KEEP;
-    const legal = k >= G.MIN_KEEP && k <= G.MAX_KEEP;
+    const ks = keepStatus(vm.hand, table.slots);
+    const legal = ks.legal;
     const btn = el('btnDraw');
     status.textContent = myTurn ? (vm.mePos === 0 ? 'Your turn — you act first' : 'Your turn') : '';
-    let hint;
-    if (nDisc === 0) hint = `Click the cards you want to discard (${minDisc}–${maxDisc}). Whatever you don't mark is your hand.`;
-    else if (k > G.MAX_KEEP) hint = `Discarding ${nDisc} — discard at least ${minDisc} (you can keep at most 5).`;
-    else if (k < G.MIN_KEEP) hint = `Discarding ${nDisc} — discard at most ${maxDisc} (you must keep at least 2).`;
-    else hint = `Discarding ${nDisc}, keeping ${k} → ${k === 5 ? 'pat (draw nothing)' : 'draw ' + (5 - k)}.`;
+    let hint = ks.hint;
     const before = vm.seats.slice(0, vm.mePos);
     const notYet = before.filter((s) => !s.announce);
     if (!myTurn && !vm.results && notYet.length) {
-      hint += ` ${notYet.map((s) => s.name).join(' and ')} ${notYet.length > 1 ? 'announce' : 'announces'} first — you can line up your discards meanwhile.`;
+      hint += ` ${notYet.map((s) => s.name).join(' and ')} ${notYet.length > 1 ? 'announce' : 'announces'} first — you can line up your keep meanwhile.`;
     }
     const heard = before.filter((s) => s.announce);
     if (myTurn && heard.length) hint = heard.map((s) => `${s.name} ${announceText(s.announce)}`).join('; ') + '. ' + hint;
     el('keepHint').textContent = hint;
     btn.disabled = !(myTurn && legal);
-    btn.textContent = !legal ? `Mark ${minDisc}–${maxDisc} cards to discard`
-      : k === 5 ? `Pat — discard ${nDisc}` : `Discard ${nDisc} · draw ${5 - k}`;
+    btn.textContent = ks.button;
     if (!myTurn && legal) btn.textContent = 'Waiting for your turn…';
     if (table.error) { el('gameError').textContent = table.error; show('gameError'); } else hide('gameError');
   }
 
-  el('btnClearKeep').addEventListener('click', () => { table.selected = new Set(); renderTable(); });
+  el('btnClearKeep').addEventListener('click', () => { table.slots = emptySlots(); renderTable(); });
 
   el('btnDraw').addEventListener('click', async () => {
     const vm = currentVM();
     if (!vm) return;
-    const keep = vm.hand.filter((c) => !table.selected.has(c));
+    const kept = new Set(slotsKeep(table.slots));
+    const keep = vm.hand.filter((c) => kept.has(c));
     const err = G.validateKeep(vm.hand, keep);
     if (err) { table.error = err; renderTable(); return; }
     table.error = null;
@@ -1611,7 +1731,7 @@
   // Shared helpers for the training hub (public/trainer.js).
   window.DDUI = {
     el, show, hide, toggle, esc, money, units, cls, cardEl, miniCards, sortCards, bestFiveOrder,
-    getSortMode: () => cardSortMode, DRAW_NAMES, evText, mixBar, mixLegend, keepIndexOf,
+    getSortMode: () => cardSortMode, DRAW_NAMES, renderKeepPicker, keepStatus, emptySlots, slotsKeep, moveCard, evText, mixBar, mixLegend, keepIndexOf,
     gradeFor, GRADES, showGradeToastFor, playGradeSound, recordDecision, loadJSON, saveJSON,
     DECISIONS_KEY, MISTAKES_KEY, showScreen, normSpot, blockOf, annLabel, annPast, posClass, posChipHTML, positionBannerHTML,
     enterTrain: () => { if (practice) { window.SolverPool.cancel(); practice = null; } if (es) { es.close(); es = null; } mode = 'train'; },

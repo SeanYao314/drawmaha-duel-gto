@@ -64,9 +64,10 @@ Open the page in two browser windows, or send the room link to a friend, to play
 1. One player creates a room and picks **heads-up or 3-handed**, the stake and the number of cards dealt (7–10). They get a 4-character code and a share link.
 2. The other players join with the code. A full room turns further players away.
 3. Once every seat is filled, the host starts the game. The first button is random, and it moves one seat each hand after that.
-4. Each player sees their 9 cards and both flops, all fully visible, then clicks the cards to discard (4–7 with 9 cards). A marked card drops down and fades, and clicking it again keeps it.
+4. Each player sees their dealt cards and both flops, and builds their hand in **five boxes** above the dealt cards. Drag a card into a box (mouse or touch), or **Ctrl/⌘-click** it (a plain click or a tap works too) to drop it into the next empty box. Drag a card between boxes to move it, or drag it out (or click it again) to put it back. Keep 2–5 cards: every empty box is a card you'll draw, and everything left in the dealt row is discarded.
+   - A card you move leaves a blank gap in the dealt row, so the row never reshuffles. With **Best 5** sorting, nothing new slides into the best-five group as you pick cards out of it.
    - The **Sort** control reorders your cards by **Dealt**, **Rank**, **Suit** or **Best 5**. Best 5 puts your strongest 5-card poker hand first, in reading order (trips before the pair, straights from the top), labels it (e.g. "Best 5 · Flush"), outlines those five cards, and puts a divider before the leftover cards. Your choice is remembered.
-   - The draw button always says what will happen, for example "Discard 6 · draw 2" or "Pat — discard 4".
+   - The draw button always says what will happen, for example "Keep 3 · draw 2" or "Pat — keep all 5 (discard 4)".
    - A later player can line up a keep early, but can't submit it until everyone before them has announced.
 5. After the last player draws, the turns and rivers come out one at a time. The opponent's final cards flip over, then the three contests and any scoop are shown. A chime plays when you win, with a bigger one for a scoop. The 🔊 button mutes it.
 6. Either player can deal the next hand. Running totals and a hand history stay for the session.
@@ -126,7 +127,7 @@ A new hand's numbers join the graph only once its reveal has finished, so the gr
 
 The landing page's **Train** tab opens study tools that don't need full hands. Everything runs in your browser, and progress is kept in local storage.
 
-- **🎯 Drill.** Rapid-fire draw decisions, heads-up or 3-handed, each graded instantly with the same sound and pop-up as practice mode. You see the flops (and, in position, the bot's announcement) and mark discards. Keys **1–9 / 0** toggle cards in the order shown, and **Enter** submits or moves to the next spot. After answering, you get the solver's keep, the top keeps with EV ± error, the "hands like yours" mix, and a range viewer for that flop. The next spot is solved in the background while you think, so there's usually no wait. Filters:
+- **🎯 Drill.** Rapid-fire draw decisions, heads-up or 3-handed, each graded instantly with the same sound and pop-up as practice mode. You see the flops (and, in position, the bot's announcement) and mark discards. Keys **1–9 / 0** move dealt cards (in the order shown) into or out of your five boxes, and **Enter** submits or moves to the next spot. After answering, you get the solver's keep, the top keeps with EV ± error, the "hands like yours" mix, and a range viewer for that flop. The next spot is solved in the background while you think, so there's usually no wait. Filters:
   - **Players:** heads-up or 3-handed.
   - **Position:** random, out of position or in position (heads-up); 1st, 2nd or button (3-handed).
   - **Bot announces** (3-handed: **1st announces** and **2nd announces**): *as GTO would* (drawn from the equilibrium's own frequencies), or fixed to **pat**, **draw 1**, **draw 2** or **draw 3**. Use this to practice responding to specific announcements, e.g. on the button after "1st pats, 2nd draws 2".

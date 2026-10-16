@@ -77,7 +77,7 @@
   // =====================================================================
   const drill = {
     running: false, spot: null, result: null, pending: null, prefetch: null,
-    marked: new Set(), answered: false, replay: null, gen: 0,
+    slots: [null, null, null, null, null], answered: false, replay: null, gen: 0,
     stats: { n: 0, gto: 0, loss: 0, streak: 0, best: 0 }
   };
 
@@ -186,7 +186,7 @@
   async function newDrill(fresh) {
     const gen = ++drill.gen;
     drill.answered = false;
-    drill.marked = new Set();
+    drill.slots = U.emptySlots();
     drill.result = null;
     drill.grade = null;
     hide('drResult');
@@ -236,7 +236,7 @@
   }
   function progressLine(p, msg) {
     if (!drill.solving) return;
-    el('drStatus').textContent = msg || `Solving this spot… ${Math.round(p * 100)}% — you can mark your discards meanwhile.`;
+    el('drStatus').textContent = msg || `Solving this spot… ${Math.round(p * 100)}% — you can line up your keep meanwhile.`;
   }
 
   // ----- rendering -----
@@ -250,7 +250,7 @@
     } else { hide('replayBanner'); show('drillSettings'); }
     if (!spot) {
       el('drStatus').textContent = 'Dealing and solving a spot…';
-      ['drBoardA', 'drBoardB', 'drCards'].forEach((id) => { el(id).innerHTML = ''; });
+      ['drBoardA', 'drBoardB', 'drCards', 'drTray'].forEach((id) => { el(id).innerHTML = ''; });
       el('drPosBanner').className = 'pos-banner hidden';
       el('drSubmit').disabled = true;
       return;
@@ -277,23 +277,16 @@
   }
   function shownOrder() { return U.sortCards(drill.spot.hand, U.getSortMode()); }
   function renderDrillCards() {
-    const spot = drill.spot, box = el('drCards');
-    box.innerHTML = '';
-    const order = shownOrder();
-    const b5 = U.getSortMode() === 'best5' ? U.bestFiveOrder(spot.hand) : null;
-    order.forEach((c, i) => {
-      if (b5 && i === 0) { const t = document.createElement('div'); t.className = 'best5-tag'; t.innerHTML = `<span>Best 5</span><strong>${esc(b5.category)}</strong>`; box.appendChild(t); }
-      const isKeep = drill.answered && drill.grade && drill.grade.bestKeep.includes(c);
-      const extra = [drill.marked.has(c) ? 'marked-discard' : '', b5 && i < 5 ? 'in-best5' : '', isKeep ? 'gto-keep' : '', drill.answered ? 'static' : ''].filter(Boolean).join(' ');
-      const node = cardEl(c, { extra });
-      if (!drill.answered) node.addEventListener('click', () => toggleMark(c));
-      const key = document.createElement('span'); key.className = 'card-key'; key.textContent = i < 9 ? String(i + 1) : i === 9 ? '0' : '';
-      node.appendChild(key);
-      box.appendChild(node);
-      if (b5 && i === 4 && order.length > 5) { const sep = document.createElement('div'); sep.className = 'best5-sep'; box.appendChild(sep); }
+    const spot = drill.spot;
+    // After answering, the boxes and dealt cards freeze and the solver's keep is outlined green.
+    const best = drill.answered && drill.grade ? new Set(drill.grade.bestKeep) : null;
+    U.renderKeepPicker({
+      tray: el('drTray'), bank: el('drCards'), hand: spot.hand, slots: drill.slots, keyLabels: !drill.answered,
+      readOnly: drill.answered, keepMark: best ? (c) => best.has(c) : null,
+      onChange: (slots) => { drill.slots = slots; renderDrillCards(); }
     });
-    const H = spot.hand.length, nd = drill.marked.size, k = H - nd;
-    const legal = k >= G.MIN_KEEP && k <= G.MAX_KEEP;
+    const ks = U.keepStatus(spot.hand, drill.slots);
+    const legal = ks.legal;
     const btn = el('drSubmit');
     if (drill.answered) {
       btn.disabled = false;
@@ -308,9 +301,9 @@
     } else {
       show('drClear'); toggle('drSkip', !drill.replay);
       btn.disabled = !legal;
-      btn.textContent = !legal ? `Mark ${H - G.MAX_KEEP}–${H - G.MIN_KEEP} cards to discard` : k === 5 ? `Pat — discard ${nd}` : `Discard ${nd} · draw ${5 - k}`;
+      btn.textContent = ks.button;
       el('drHint').classList.remove('with-cards');
-      el('drHint').textContent = nd === 0 ? `Click the cards you want to discard (${H - G.MAX_KEEP}–${H - G.MIN_KEEP}).` : legal ? `Keeping ${k} → ${k === 5 ? 'pat' : 'draw ' + (5 - k)}.` : k > 5 ? `Discard at least ${H - 5}.` : `Discard at most ${H - 2}.`;
+      el('drHint').textContent = ks.hint;
     }
     const g = el('drGrade');
     if (drill.grade) { g.className = `grade-badge g-${drill.grade.key}`; g.textContent = (drill.grade.key === 'gto' ? '✓ ' : '') + drill.grade.label; }
@@ -319,7 +312,7 @@
   }
   function toggleMark(c) {
     if (drill.answered || !drill.spot) return;
-    if (drill.marked.has(c)) drill.marked.delete(c); else drill.marked.add(c);
+    drill.slots = U.moveCard(drill.slots, c, 'toggle');
     renderDrillCards();
   }
   function renderDrillStrip() {
@@ -332,7 +325,7 @@
   }
 
   // ----- answering -----
-  el('drClear').addEventListener('click', () => { drill.marked = new Set(); renderDrillCards(); });
+  el('drClear').addEventListener('click', () => { drill.slots = U.emptySlots(); renderDrillCards(); });
   el('drSkip').addEventListener('click', () => { if (!drill.answered) newDrill(false); });
   el('drSubmit').addEventListener('click', onSubmit);
   function onSubmit() {
@@ -341,10 +334,10 @@
       if (drill.replay) nextReplay(); else newDrill(false);
       return;
     }
-    const H = drill.spot.hand.length, k = H - drill.marked.size;
-    if (k < G.MIN_KEEP || k > G.MAX_KEEP) return;
+    const kept = new Set(U.slotsKeep(drill.slots));
+    if (kept.size < G.MIN_KEEP || kept.size > G.MAX_KEEP) return;
     drill.answered = true;
-    drill.myKeep = drill.spot.hand.filter((c) => !drill.marked.has(c));
+    drill.myKeep = drill.spot.hand.filter((c) => kept.has(c));
     renderDrillCards();
     if (drill.result) gradeDrill();
   }
